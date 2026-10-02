@@ -91,7 +91,8 @@ fun PlayerScreen(
     val saved by Repo.saved.collectAsStateWithLifecycle()
     val sentences = transcripts[id].orEmpty()
 
-    LaunchedEffect(id, item.hasTranscript) { if (item.hasTranscript) Repo.loadTranscript(id) }
+    // Also picks up a half-finished transcript, so the part already written can be read while the rest is made.
+    LaunchedEffect(id, item.hasTranscript) { Repo.loadTranscript(id) }
 
     val loaded = player.mediaId == id
     val position = if (loaded) player.positionMs else item.lastPositionMs

@@ -42,13 +42,18 @@ object Repo {
         settingsStore = SettingsStore(context)
         settings.value = settingsStore.load()
         library.value = readArray("library.json").mapObjects(::libraryItemFromJson).map {
-            it.copy(hasAudio = audioFile(it.episode.id).exists(), hasTranscript = transcriptFile(it.episode.id).exists())
+            it.copy(hasAudio = audioFile(it.episode.id).exists(), hasTranscript = transcriptComplete(it.episode.id))
         }
         saved.value = readArray("saved.json").mapObjects(::savedSentenceFromJson)
     }
 
     fun audioFile(id: String) = File(filesDir, "audio/$id.mp3")
     private fun transcriptFile(id: String) = File(filesDir, "transcripts/$id.json")
+
+    /** Exists only while a transcript is unfinished; holds how many seconds of audio are already written down. */
+    private fun progressFile(id: String) = File(filesDir, "transcripts/$id.progress")
+
+    private fun transcriptComplete(id: String) = transcriptFile(id).exists() && !progressFile(id).exists()
 
     private fun readArray(name: String): JSONArray {
         val f = File(filesDir, name)
@@ -135,6 +140,7 @@ object Repo {
         scope.launch {
             audioFile(id).delete()
             transcriptFile(id).delete()
+            progressFile(id).delete()
         }
     }
 
@@ -191,7 +197,7 @@ object Repo {
                 updateItem(id) { copy(hasAudio = true) }
 
                 val s = settings.value
-                if (!transcriptFile(id).exists()) {
+                if (!transcriptComplete(id)) {
                     if (s.geminiKey.isBlank()) throw AiException("還沒設定 Gemini 金鑰，所以只有聲音、沒有原稿")
                     transcribe(episode, s)
                 }
@@ -262,8 +268,16 @@ object Repo {
             ?: throw AiException("不知道這集有多長，沒辦法寫原稿")
         val context = "Programme: ${episode.feedTitle}\nEpisode: ${episode.title}\n${episode.description.take(1500)}"
 
+        // Each finished chunk is saved straight away, so a failure or a closed app resumes here instead of starting over.
         val all = ArrayList<Sentence>()
         var from = 0
+        val resumeAt = progressFile(id).takeIf { it.exists() }?.readText()?.trim()?.toIntOrNull() ?: 0
+        if (resumeAt > 0 && transcriptFile(id).exists()) {
+            all += JSONArray(transcriptFile(id).readText()).mapObjects(::sentenceFromJson)
+            from = resumeAt
+        }
+        // The marker goes down before any transcript text, so a partly written transcript is never taken for a whole one.
+        progressFile(id).writeText(from.toString())
         while (from < total) {
             val to = min(from + CHUNK_SEC, total)
             setStage(id, "寫原稿 ${from * 100 / total}%")
@@ -275,9 +289,15 @@ object Repo {
                 all += if (sentence.startMs > previous) sentence else sentence.copy(startMs = previous + 400)
             }
             from = to
+            saveTranscript(id, all.toList())
+            progressFile(id).writeText(to.toString())
         }
-        if (all.isEmpty()) throw AiException("Gemini 沒有寫出原稿，可以再試一次或換型號")
-        saveTranscript(id, all)
+        if (all.isEmpty()) {
+            transcriptFile(id).delete()
+            progressFile(id).delete()
+            throw AiException("Gemini 沒有寫出原稿，可以再試一次或換型號")
+        }
+        progressFile(id).delete()
     }
 
     private suspend fun translateMissing(id: String, s: Settings) {
