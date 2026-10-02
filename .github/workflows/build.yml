@@ -1,0 +1,41 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Test and build
+        run: ./gradlew --no-daemon testDebugUnitTest assembleRelease
+
+      - name: Name the APK
+        run: cp app/build/outputs/apk/release/app-release.apk english-bbc.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: english-bbc-apk
+          path: english-bbc.apk
+
+      # One rolling release, so the phone can always download from /releases/latest.
+      - name: Publish latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest english-bbc.apk --title "最新版" --notes "由 ${GITHUB_SHA::7} 自動建置。手機下載 english-bbc.apk 後安裝。"

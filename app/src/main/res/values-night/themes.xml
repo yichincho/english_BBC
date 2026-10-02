@@ -1,0 +1,5 @@
+<resources>
+    <style name="Theme.EnglishBBC" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#FF10131A</item>
+    </style>
+</resources>
