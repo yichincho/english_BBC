@@ -3,24 +3,17 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- headphones -->
+    <!-- Five rising bars: the five-day speed cycle, 1.2x up to 2.0x. -->
     <path
         android:fillColor="#00000000"
         android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="5"
+        android:strokeWidth="8"
         android:strokeLineCap="round"
-        android:pathData="M34,60 V54 A20,20 0 0 1 74,54 V60" />
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M30,58 h8 a2,2 0 0 1 2,2 v12 a2,2 0 0 1 -2,2 h-4 a4,4 0 0 1 -4,-4 z" />
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M78,58 h-8 a2,2 0 0 0 -2,2 v12 a2,2 0 0 0 2,2 h4 a4,4 0 0 0 4,-4 z" />
-    <!-- transcript lines -->
+        android:pathData="M28,74 V62 M41,74 V54 M54,74 V46 M67,74 V38" />
     <path
         android:fillColor="#00000000"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="3"
+        android:strokeColor="#FFFFC24A"
+        android:strokeWidth="8"
         android:strokeLineCap="round"
-        android:pathData="M47,58 H61 M47,65 H61 M47,72 H56" />
+        android:pathData="M80,74 V30" />
 </vector>
