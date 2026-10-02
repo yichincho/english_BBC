@@ -60,6 +60,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.yichincho.englishbbc.data.Ai
 import com.yichincho.englishbbc.data.DEFAULT_FEEDS
+import com.yichincho.englishbbc.data.PRESET_MODELS
 import com.yichincho.englishbbc.data.Provider
 import com.yichincho.englishbbc.data.Repo
 import com.yichincho.englishbbc.data.Settings
@@ -113,13 +114,13 @@ fun SettingsScreen(padding: PaddingValues, settings: Settings, now: LocalDateTim
 
         SectionLabel("速度", Modifier.padding(top = 8.dp))
         SettingsCard {
-            val cycle = SpeedRule.cycleIndex(now, settings.nightStartHour, settings.dayStartHour, settings.cycleStartEpochDay)
-            HourRow(Icons.Rounded.WbSunny, "白天開始", "固定 1.0x", settings.dayStartHour, 3..11) { h ->
-                Repo.updateSettings { it.copy(dayStartHour = h) }
+            val cycle = SpeedRule.cycleIndex(now, settings.nightStartMinute, settings.dayStartMinute, settings.cycleStartEpochDay)
+            TimeRow(Icons.Rounded.WbSunny, "白天開始", "固定 1.0x", settings.dayStartMinute, 3 * 60..11 * 60) { m ->
+                Repo.updateSettings { it.copy(dayStartMinute = m) }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            HourRow(Icons.Rounded.NightsStay, "晚上開始", "每天 +0.2，到 2.0 重來", settings.nightStartHour, 12..23) { h ->
-                Repo.updateSettings { it.copy(nightStartHour = h) }
+            TimeRow(Icons.Rounded.NightsStay, "晚上開始", "每天 +0.2，到 2.0 重來", settings.nightStartMinute, 12 * 60..23 * 60 + 30) { m ->
+                Repo.updateSettings { it.copy(nightStartMinute = m) }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -161,7 +162,7 @@ private fun SettingsCard(content: @Composable () -> Unit) {
 
 private fun purposeOf(p: Provider) = when (p) {
     Provider.GEMINI -> "聽聲音、寫原稿（一定要有）"
-    Provider.NVIDIA -> "翻中文、解釋單字（跑 DeepSeek v4.1）"
+    Provider.NVIDIA -> "翻中文、解釋單字（免費金鑰，可選型號）"
     Provider.DEEPSEEK -> "翻中文、解釋單字（DeepSeek 官方）"
 }
 
@@ -175,6 +176,8 @@ private fun ProviderRow(p: Provider, settings: Settings) {
     var failed by remember { mutableStateOf(false) }
     var models by remember { mutableStateOf<List<String>>(emptyList()) }
     var modelMenu by remember { mutableStateOf(false) }
+    val presets = PRESET_MODELS[p].orEmpty()
+    val choices = presets + (models - presets.toSet())
     // Typed text lives here and is written through, so the cursor never waits on the settings round trip.
     var key by remember { mutableStateOf(settings.key(p)) }
     var model by remember { mutableStateOf(settings.model(p)) }
@@ -235,7 +238,7 @@ private fun ProviderRow(p: Provider, settings: Settings) {
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         trailingIcon = {
-                            if (models.isNotEmpty()) {
+                            if (choices.isNotEmpty()) {
                                 IconButton(onClick = { modelMenu = true }) { Icon(Icons.Rounded.ExpandMore, "從清單選型號") }
                             }
                         },
@@ -244,7 +247,7 @@ private fun ProviderRow(p: Provider, settings: Settings) {
                         expanded = modelMenu, onDismissRequest = { modelMenu = false },
                         modifier = Modifier.heightIn(max = 320.dp),
                     ) {
-                        models.forEach { m ->
+                        choices.forEach { m ->
                             DropdownMenuItem(
                                 text = { Text(m) },
                                 onClick = {
@@ -298,7 +301,8 @@ private fun ProviderRow(p: Provider, settings: Settings) {
 }
 
 @Composable
-private fun HourRow(icon: ImageVector, title: String, subtitle: String, hour: Int, range: IntRange, onChange: (Int) -> Unit) {
+private fun TimeRow(icon: ImageVector, title: String, subtitle: String, minute: Int, range: IntRange, onChange: (Int) -> Unit) {
+    val step = 30
     Row(
         Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -309,9 +313,9 @@ private fun HourRow(icon: ImageVector, title: String, subtitle: String, hour: In
             Text(title, style = MaterialTheme.typography.bodyLarge)
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        IconButton(onClick = { onChange(hour - 1) }, enabled = hour > range.first) { Icon(Icons.Rounded.Remove, "早一小時") }
-        Text("%02d:00".format(hour), style = MaterialTheme.typography.titleMedium)
-        IconButton(onClick = { onChange(hour + 1) }, enabled = hour < range.last) { Icon(Icons.Rounded.Add, "晚一小時") }
+        IconButton(onClick = { onChange(minute - step) }, enabled = minute > range.first) { Icon(Icons.Rounded.Remove, "早半小時") }
+        Text("%02d:%02d".format(minute / 60, minute % 60), style = MaterialTheme.typography.titleMedium)
+        IconButton(onClick = { onChange(minute + step) }, enabled = minute < range.last) { Icon(Icons.Rounded.Add, "晚半小時") }
     }
 }
 

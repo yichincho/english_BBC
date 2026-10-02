@@ -66,8 +66,8 @@ fun TodayScreen(
     val saved by Repo.saved.collectAsStateWithLifecycle()
     var removing by remember { mutableStateOf<LibraryItem?>(null) }
 
-    val night = SpeedRule.isNight(now.hour, settings.nightStartHour, settings.dayStartHour)
-    val cycle = SpeedRule.cycleIndex(now, settings.nightStartHour, settings.dayStartHour, settings.cycleStartEpochDay)
+    val night = SpeedRule.isNight(now, settings.nightStartMinute, settings.dayStartMinute)
+    val cycle = SpeedRule.cycleIndex(now, settings.nightStartMinute, settings.dayStartMinute, settings.cycleStartEpochDay)
     val speed = SpeedRule.speedAt(now, settings)
     val featured = library.firstOrNull()
 

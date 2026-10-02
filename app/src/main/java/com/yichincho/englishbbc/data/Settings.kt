@@ -16,6 +16,17 @@ val DEFAULT_FEEDS = listOf(
 
 enum class Provider(val label: String) { GEMINI("Gemini"), NVIDIA("NVIDIA"), DEEPSEEK("DeepSeek") }
 
+/** Popular models offered as one-tap choices before the key has been tested. */
+val PRESET_MODELS: Map<Provider, List<String>> = mapOf(
+    Provider.NVIDIA to listOf(
+        "deepseek-ai/deepseek-v4.1-flash",
+        "z-ai/glm-5.3",
+        "z-ai/glm-5.3-flash",
+        "nvidia/nemotron-3-super-120b-a12b",
+        "nvidia/nemotron-3-ultra-550b-a55b",
+    ),
+)
+
 data class Settings(
     val geminiKey: String = "",
     val geminiModel: String = "gemini-flash-latest",
@@ -25,8 +36,9 @@ data class Settings(
     val deepseekModel: String = "deepseek-chat",
     /** "auto" or a [Provider] name. */
     val translator: String = "auto",
-    val nightStartHour: Int = 18,
-    val dayStartHour: Int = 6,
+    /** Minutes since midnight. */
+    val nightStartMinute: Int = 17 * 60 + 30,
+    val dayStartMinute: Int = 6 * 60,
     val cycleStartEpochDay: Long = 0,
     val fontSizeSp: Int = 16,
     val showZh: Boolean = true,
@@ -86,8 +98,8 @@ class SettingsStore(context: Context) {
             deepseekKey = prefs.getString("deepseekKey", d.deepseekKey)!!,
             deepseekModel = prefs.getString("deepseekModel", d.deepseekModel)!!,
             translator = prefs.getString("translator", d.translator)!!,
-            nightStartHour = prefs.getInt("nightStartHour", d.nightStartHour),
-            dayStartHour = prefs.getInt("dayStartHour", d.dayStartHour),
+            nightStartMinute = prefs.getInt("nightStartMinute", d.nightStartMinute),
+            dayStartMinute = prefs.getInt("dayStartMinute", d.dayStartMinute),
             cycleStartEpochDay = prefs.getLong("cycleStartEpochDay", 0),
             fontSizeSp = prefs.getInt("fontSizeSp", d.fontSizeSp),
             showZh = prefs.getBoolean("showZh", d.showZh),
@@ -102,7 +114,7 @@ class SettingsStore(context: Context) {
             .putString("nvidiaKey", s.nvidiaKey).putString("nvidiaModel", s.nvidiaModel)
             .putString("deepseekKey", s.deepseekKey).putString("deepseekModel", s.deepseekModel)
             .putString("translator", s.translator)
-            .putInt("nightStartHour", s.nightStartHour).putInt("dayStartHour", s.dayStartHour)
+            .putInt("nightStartMinute", s.nightStartMinute).putInt("dayStartMinute", s.dayStartMinute)
             .putLong("cycleStartEpochDay", s.cycleStartEpochDay)
             .putInt("fontSizeSp", s.fontSizeSp).putBoolean("showZh", s.showZh)
             .putStringSet("enabledFeeds", s.enabledFeeds)

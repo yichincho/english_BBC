@@ -7,10 +7,10 @@ import java.time.LocalDateTime
 
 class SpeedRuleTest {
     private val start = LocalDate.of(2026, 10, 2)
-    private val s = Settings(nightStartHour = 18, dayStartHour = 6, cycleStartEpochDay = start.toEpochDay())
+    private val s = Settings(nightStartMinute = 17 * 60 + 30, dayStartMinute = 6 * 60, cycleStartEpochDay = start.toEpochDay())
 
-    private fun speed(dayOffset: Long, hour: Int) =
-        SpeedRule.speedAt(LocalDateTime.of(start.plusDays(dayOffset), java.time.LocalTime.of(hour, 0)), s)
+    private fun speed(dayOffset: Long, hour: Int, minute: Int = 0) =
+        SpeedRule.speedAt(LocalDateTime.of(start.plusDays(dayOffset), java.time.LocalTime.of(hour, minute)), s)
 
     @Test
     fun daytimeIsAlwaysOne() {
@@ -30,8 +30,9 @@ class SpeedRuleTest {
 
     @Test
     fun boundaries() {
-        assertEquals(1f, speed(0, 17), 0f)
-        assertEquals(1.2f, speed(0, 18), 0.001f)
+        assertEquals(1f, speed(0, 17, 29), 0f)
+        assertEquals(1.2f, speed(0, 17, 30), 0.001f)
+        assertEquals(1.2f, speed(1, 5, 59), 0.001f)
         assertEquals(1f, speed(1, 6), 0f)
     }
 
