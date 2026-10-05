@@ -24,7 +24,12 @@ data class LibraryItem(
     val hasAudio: Boolean = false,
     val hasTranscript: Boolean = false,
     val error: String = "",
-)
+    /** Sentences in the transcript, and how many of them have Chinese. */
+    val sentenceCount: Int = 0,
+    val translatedCount: Int = 0,
+) {
+    val translationComplete get() = sentenceCount > 0 && translatedCount >= sentenceCount
+}
 
 data class Word(val en: String, val zh: String)
 
@@ -63,6 +68,7 @@ fun LibraryItem.toJson(): JSONObject = JSONObject()
     .put("episode", episode.toJson()).put("addedAtMs", addedAtMs)
     .put("listenCount", listenCount).put("lastPositionMs", lastPositionMs)
     .put("hasAudio", hasAudio).put("hasTranscript", hasTranscript).put("error", error)
+    .put("sentenceCount", sentenceCount).put("translatedCount", translatedCount)
 
 fun libraryItemFromJson(o: JSONObject) = LibraryItem(
     episode = episodeFromJson(o.getJSONObject("episode")),
@@ -72,6 +78,8 @@ fun libraryItemFromJson(o: JSONObject) = LibraryItem(
     hasAudio = o.optBoolean("hasAudio"),
     hasTranscript = o.optBoolean("hasTranscript"),
     error = o.optString("error"),
+    sentenceCount = o.optInt("sentenceCount"),
+    translatedCount = o.optInt("translatedCount"),
 )
 
 fun Sentence.toJson(): JSONObject = JSONObject()

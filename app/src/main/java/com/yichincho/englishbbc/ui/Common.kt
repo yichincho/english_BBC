@@ -82,12 +82,14 @@ fun Pill(text: String, kind: PillKind, modifier: Modifier = Modifier, busy: Bool
     }
 }
 
-/** One pill that says where an episode stands: being prepared, ready, audio only, or failed. */
+/** One pill that says where an episode stands: being prepared, ready, how much is in Chinese, audio only, or failed. */
 @Composable
 fun EpisodeStatus(item: LibraryItem, stage: String?, modifier: Modifier = Modifier) {
     when {
         stage != null -> Pill(stage, PillKind.WARN, modifier, busy = true)
-        item.hasTranscript && item.error.isEmpty() -> Pill("原稿已備好", PillKind.OK, modifier)
+        item.hasTranscript && item.translationComplete -> Pill("原稿已備好 · 中文 100%", PillKind.OK, modifier)
+        item.hasTranscript && item.sentenceCount > 0 ->
+            Pill("原稿 100% · 中文 ${item.translatedCount * 100 / item.sentenceCount}%", PillKind.WARN, modifier)
         item.hasTranscript -> Pill("有原稿，沒翻完", PillKind.WARN, modifier)
         item.hasAudio -> Pill("只有聲音", PillKind.WARN, modifier)
         else -> Pill("還沒準備好", PillKind.WARN, modifier)
