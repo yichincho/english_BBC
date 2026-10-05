@@ -12,8 +12,10 @@ android {
         applicationId = "com.yichincho.englishbbc"
         minSdk = 26
         targetSdk = 34
-        versionCode = 4
-        versionName = "1.3"
+        // GitHub Actions numbers every build, so each APK it publishes has its own, ever-growing version.
+        val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
+        versionCode = build ?: 4
+        versionName = if (build != null) "1.4.$build" else "1.4-dev"
     }
 
     signingConfigs {
@@ -47,6 +49,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
