@@ -33,6 +33,11 @@ class PlaybackService : MediaSessionService() {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_ENDED) player.currentMediaItem?.let { Repo.recordListened(it.mediaId) }
             }
+
+            // With single-episode loop on, the episode never reaches STATE_ENDED; each wrap-around counts as one listen.
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) mediaItem?.let { Repo.recordListened(it.mediaId) }
+            }
         })
         val openApp = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,

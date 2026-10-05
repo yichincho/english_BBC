@@ -50,6 +50,7 @@ import com.yichincho.englishbbc.ui.TodayScreen
 import com.yichincho.englishbbc.ui.fmtSpeed
 import com.yichincho.englishbbc.ui.rememberNow
 import kotlinx.coroutines.delay
+import androidx.media3.common.Player
 
 class MainActivity : ComponentActivity() {
     private lateinit var player: PlayerHolder
@@ -89,6 +90,9 @@ private fun AppRoot(player: PlayerHolder) {
 
     // Keeps the playing speed in step with the clock, and the position fresh for the transcript highlight.
     LaunchedEffect(player.controller, speed) { player.controller?.setPlaybackSpeed(speed) }
+    LaunchedEffect(player.controller, settings.loopEpisode) {
+        player.controller?.repeatMode = if (settings.loopEpisode) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+    }
     LaunchedEffect(player.controller) {
         var ticks = 0
         while (true) {

@@ -27,7 +27,8 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Repeat
-import androidx.compose.material.icons.rounded.RepeatOne
+import androidx.compose.material.icons.rounded.RepeatOn
+import androidx.compose.material.icons.rounded.Replay
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Star
@@ -164,11 +165,13 @@ fun PlayerScreen(
             playing = loaded && player.isPlaying,
             enabled = item.hasAudio,
             repeating = repeatIndex != null,
+            looping = settings.loopEpisode,
             onSeek = { if (loaded) player.seekTo(it) else player.open(item, it) },
             onToggle = { if (loaded) player.toggle() else player.open(item) },
             onPrev = { jumpTo((current - 1).coerceAtLeast(0)) },
             onNext = { jumpTo(current + 1) },
             onRepeat = { repeatIndex = if (repeatIndex == null && current >= 0) current else null },
+            onLoop = { Repo.updateSettings { it.copy(loopEpisode = !it.loopEpisode) } },
         )
     }
 }
@@ -300,11 +303,13 @@ private fun Controls(
     playing: Boolean,
     enabled: Boolean,
     repeating: Boolean,
+    looping: Boolean,
     onSeek: (Long) -> Unit,
     onToggle: () -> Unit,
     onPrev: () -> Unit,
     onNext: () -> Unit,
     onRepeat: () -> Unit,
+    onLoop: () -> Unit,
 ) {
     var dragging by remember { mutableStateOf<Float?>(null) }
     val fraction = dragging ?: if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
@@ -334,7 +339,7 @@ private fun Controls(
             ) {
                 IconButton(onClick = onRepeat, enabled = enabled) {
                     Icon(
-                        if (repeating) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                        Icons.Rounded.Replay,
                         contentDescription = if (repeating) "停止重複這一句" else "重複這一句",
                         tint = if (repeating) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -348,7 +353,13 @@ private fun Controls(
                     )
                 }
                 IconButton(onClick = onNext, enabled = enabled) { Icon(Icons.Rounded.SkipNext, "下一句", Modifier.size(32.dp)) }
-                Spacer(Modifier.size(48.dp))
+                IconButton(onClick = onLoop, enabled = enabled) {
+                    Icon(
+                        if (looping) Icons.Rounded.RepeatOn else Icons.Rounded.Repeat,
+                        contentDescription = if (looping) "停止單曲循環" else "單曲循環",
+                        tint = if (looping) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }

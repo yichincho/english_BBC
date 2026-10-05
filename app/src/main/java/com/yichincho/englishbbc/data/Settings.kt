@@ -42,6 +42,8 @@ data class Settings(
     val cycleStartEpochDay: Long = 0,
     val fontSizeSp: Int = 16,
     val showZh: Boolean = true,
+    /** Single-episode loop: when an episode ends it starts again from the top. */
+    val loopEpisode: Boolean = false,
     val enabledFeeds: Set<String> = setOf(DEFAULT_FEEDS[0].url, DEFAULT_FEEDS[1].url),
     val customFeeds: List<Feed> = emptyList(),
 ) {
@@ -103,6 +105,7 @@ class SettingsStore(context: Context) {
             cycleStartEpochDay = prefs.getLong("cycleStartEpochDay", 0),
             fontSizeSp = prefs.getInt("fontSizeSp", d.fontSizeSp),
             showZh = prefs.getBoolean("showZh", d.showZh),
+            loopEpisode = prefs.getBoolean("loopEpisode", d.loopEpisode),
             enabledFeeds = prefs.getStringSet("enabledFeeds", d.enabledFeeds)!!.toSet(),
             customFeeds = custom,
         )
@@ -117,6 +120,7 @@ class SettingsStore(context: Context) {
             .putInt("nightStartMinute", s.nightStartMinute).putInt("dayStartMinute", s.dayStartMinute)
             .putLong("cycleStartEpochDay", s.cycleStartEpochDay)
             .putInt("fontSizeSp", s.fontSizeSp).putBoolean("showZh", s.showZh)
+            .putBoolean("loopEpisode", s.loopEpisode)
             .putStringSet("enabledFeeds", s.enabledFeeds)
             .putString("customFeeds", s.customFeeds.toJsonArray { JSONObject().put("title", it.title).put("url", it.url) }.toString())
             .apply()
