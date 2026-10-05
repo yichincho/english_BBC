@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.yichincho.englishbbc.BuildConfig
 import com.yichincho.englishbbc.data.LibraryItem
 import com.yichincho.englishbbc.data.Repo
 import com.yichincho.englishbbc.data.Settings
@@ -77,7 +78,18 @@ fun TodayScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            ScreenTitle("今天", "${now.monthValue}月${now.dayOfMonth}日 · ${if (night) "晚上" else "白天"} · 第 ${cycle + 1} 天")
+            Row(verticalAlignment = Alignment.Top) {
+                ScreenTitle(
+                    "今天", "${now.monthValue}月${now.dayOfMonth}日 · ${if (night) "晚上" else "白天"} · 第 ${cycle + 1} 天",
+                    modifier = Modifier.weight(1f),
+                )
+                // Shows which build is installed, to compare with the version on the Releases page.
+                Text(
+                    "v${BuildConfig.VERSION_NAME}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         item { SpeedCard(night, cycle) }
 

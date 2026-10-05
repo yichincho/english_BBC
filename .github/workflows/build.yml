@@ -38,4 +38,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete latest --yes --cleanup-tag || true
-          gh release create latest english-bbc.apk --title "最新版" --notes "由 ${GITHUB_SHA::7} 自動建置。手機下載 english-bbc.apk 後安裝。"
+          gh release create latest english-bbc.apk --title "最新版 v1.4.${GITHUB_RUN_NUMBER}" --notes "版本 v1.4.${GITHUB_RUN_NUMBER}，由 ${GITHUB_SHA::7} 自動建置。手機下載 english-bbc.apk 後安裝，App「今天」頁右上角會顯示同一個版本號。"
