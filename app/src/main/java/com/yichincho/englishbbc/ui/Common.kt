@@ -26,6 +26,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.yichincho.englishbbc.data.LibraryItem
+import com.yichincho.englishbbc.data.stageHeadline
 import kotlinx.coroutines.delay
 import java.time.Instant
 import java.time.LocalDateTime
@@ -86,7 +87,7 @@ fun Pill(text: String, kind: PillKind, modifier: Modifier = Modifier, busy: Bool
 @Composable
 fun EpisodeStatus(item: LibraryItem, stage: String?, modifier: Modifier = Modifier) {
     when {
-        stage != null -> Pill(stage, PillKind.WARN, modifier, busy = true)
+        stage != null -> Pill(stageHeadline(stage), PillKind.WARN, modifier, busy = true)
         item.hasTranscript && item.translationComplete -> Pill("原稿已備好 · 中文 100%", PillKind.OK, modifier)
         item.hasTranscript && item.sentenceCount > 0 ->
             Pill("原稿 100% · 中文 ${item.translatedCount * 100 / item.sentenceCount}%", PillKind.WARN, modifier)

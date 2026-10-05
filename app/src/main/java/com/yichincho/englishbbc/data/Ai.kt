@@ -4,12 +4,14 @@ import kotlinx.coroutines.delay
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.File
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 class AiException(message: String, val httpCode: Int = 0) : Exception(message)
@@ -23,9 +25,24 @@ object Http {
 
     val JSON = "application/json; charset=utf-8".toMediaType()
 
-    /** Runs the request and returns the body, or throws an [AiException] with a short readable reason. */
-    fun execute(request: Request, who: String): String {
-        client.newCall(request).execute().use { resp ->
+    /**
+     * Runs the request and returns the body, or throws an [AiException] with a short readable reason.
+     * With [timeoutSec] the whole call is limited to that long, and a call that runs out of time or loses the
+     * connection also becomes an [AiException], so the caller can move on instead of waiting.
+     */
+    fun execute(request: Request, who: String, timeoutSec: Long = 0): String {
+        val call = client.newCall(request)
+        if (timeoutSec <= 0) return read(call.execute(), who)
+        call.timeout().timeout(timeoutSec, TimeUnit.SECONDS)
+        return try {
+            read(call.execute(), who)
+        } catch (e: IOException) {
+            throw AiException("$who 沒有在 $timeoutSec 秒內回覆（或連線斷了）")
+        }
+    }
+
+    private fun read(response: Response, who: String): String {
+        response.use { resp ->
             val body = resp.body?.string().orEmpty()
             if (resp.isSuccessful) return body
             val detail = try {
@@ -146,12 +163,12 @@ object Gemini {
         return info.getString("uri")
     }
 
-    private fun generate(key: String, model: String, body: JSONObject): String {
+    private fun generate(key: String, model: String, body: JSONObject, timeoutSec: Long = 0): String {
         val req = Request.Builder().url("$BASE/v1beta/models/$model:generateContent")
             .header("x-goog-api-key", key)
             .post(body.toString().toRequestBody(Http.JSON))
             .build()
-        val resp = JSONObject(Http.execute(req, WHO))
+        val resp = JSONObject(Http.execute(req, WHO, timeoutSec))
         val candidate = resp.optJSONArray("candidates")?.optJSONObject(0)
             ?: throw AiException("Gemini 沒有回答（${resp.optJSONObject("promptFeedback")?.optString("blockReason").orEmpty()}）")
         val parts = candidate.optJSONObject("content")?.optJSONArray("parts") ?: JSONArray()
@@ -199,13 +216,13 @@ object Gemini {
             .sortedBy { it.startMs }
     }
 
-    fun chatJson(key: String, model: String, system: String, user: String): String {
+    fun chatJson(key: String, model: String, system: String, user: String, timeoutSec: Long = 0): String {
         val body = JSONObject()
             .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
             .put("contents", JSONArray().put(JSONObject().put("role", "user")
                 .put("parts", JSONArray().put(JSONObject().put("text", user)))))
             .put("generationConfig", JSONObject().put("temperature", 0.2).put("responseMimeType", "application/json"))
-        return generate(key, model, body)
+        return generate(key, model, body, timeoutSec)
     }
 }
 
@@ -223,7 +240,10 @@ object OpenAiCompat {
         return data.mapObjects { it.optString("id") }.filter { it.isNotBlank() }.sorted()
     }
 
-    fun chat(p: Provider, key: String, model: String, system: String, user: String, maxTokens: Int = 4096): String {
+    fun chat(
+        p: Provider, key: String, model: String, system: String, user: String,
+        maxTokens: Int = 4096, timeoutSec: Long = 0,
+    ): String {
         val body = JSONObject()
             .put("model", model)
             .put("temperature", 0.2)
@@ -238,7 +258,7 @@ object OpenAiCompat {
             .header("Authorization", "Bearer $key")
             .post(body.toString().toRequestBody(Http.JSON))
             .build()
-        val resp = JSONObject(Http.execute(req, p.label))
+        val resp = JSONObject(Http.execute(req, p.label, timeoutSec))
         return resp.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")?.optString("content")
             ?: throw AiException("${p.label} 沒有回答")
     }
@@ -278,13 +298,23 @@ object Ai {
 只輸出 JSON，格式：{"items":[{"i":0,"zh":"中文翻譯","words":[{"en":"單字","zh":"意思"}]}]}
 i 要跟輸入的一樣，每一句都要有，不可以漏。"""
 
+    /** One translation call may take this long before it counts as stuck. */
+    const val TRANSLATE_TIMEOUT_SEC = 90L
+
     /** Returns the sentences of [batch] with Chinese and vocabulary filled in; index = position in the transcript. */
     fun translate(s: Settings, p: Provider, batch: List<IndexedValue<Sentence>>): Map<Int, Sentence> {
         val user = JSONObject().put("sentences", batch.toJsonArray { JSONObject().put("i", it.index).put("en", it.value.en) }).toString()
-        val reply = if (p == Provider.GEMINI) Gemini.chatJson(s.key(p), s.model(p), TRANSLATE_SYSTEM, user)
-        else OpenAiCompat.chat(p, s.key(p), s.model(p), TRANSLATE_SYSTEM, user)
+        val raw = if (p == Provider.GEMINI) Gemini.chatJson(s.key(p), s.model(p), TRANSLATE_SYSTEM, user, TRANSLATE_TIMEOUT_SEC)
+        else OpenAiCompat.chat(p, s.key(p), s.model(p), TRANSLATE_SYSTEM, user, timeoutSec = TRANSLATE_TIMEOUT_SEC)
+        // Reasoning models may put their thinking, braces and all, in front of the answer.
+        val reply = raw.replace(Regex("(?s)<think>.*?</think>"), "").trim()
 
-        val items = extractJsonObject(reply).optJSONArray("items") ?: JSONArray()
+        val items = try {
+            extractJsonObject(reply).optJSONArray("items") ?: JSONArray()
+        } catch (e: AiException) {
+            val shown = reply.replace(Regex("\\s+"), " ").take(60)
+            throw AiException(if (shown.isEmpty()) "${p.label} 回了空白" else "${p.label} 的回答讀不懂：$shown…")
+        }
         val byIndex = batch.associate { it.index to it.value }
         return items.mapObjects { it }.mapNotNull { o ->
             val original = byIndex[o.optInt("i", -1)] ?: return@mapNotNull null

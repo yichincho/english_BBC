@@ -69,6 +69,7 @@ import com.yichincho.englishbbc.data.LibraryItem
 import com.yichincho.englishbbc.data.Repo
 import com.yichincho.englishbbc.data.Sentence
 import com.yichincho.englishbbc.data.Settings
+import com.yichincho.englishbbc.data.stageHeadline
 import com.yichincho.englishbbc.player.PlayerHolder
 import kotlinx.coroutines.delay
 
@@ -281,7 +282,7 @@ private fun NoTranscript(item: LibraryItem, stage: String?) {
     ) {
         when {
             stage != null -> {
-                Pill(stage, PillKind.WARN, busy = true)
+                Pill(stageHeadline(stage), PillKind.WARN, busy = true)
                 Text(
                     "原稿做好會自己出現，請讓 App 開著。",
                     color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
