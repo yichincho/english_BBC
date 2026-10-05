@@ -41,6 +41,7 @@ import com.yichincho.englishbbc.data.FeedState
 import com.yichincho.englishbbc.data.LibraryItem
 import com.yichincho.englishbbc.data.Repo
 import com.yichincho.englishbbc.data.Settings
+import com.yichincho.englishbbc.data.stageHeadline
 
 @Composable
 fun LibraryScreen(
@@ -132,7 +133,7 @@ private fun FeedEpisodeRow(episode: Episode, item: LibraryItem?, stage: String?)
                 Text("加入")
             }
         } else if (stage != null) {
-            Pill(stage, PillKind.WARN, busy = true)
+            Pill(stageHeadline(stage), PillKind.WARN, busy = true)
         } else {
             Pill("已加入", PillKind.OK)
         }

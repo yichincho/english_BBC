@@ -16,6 +16,11 @@ data class Episode(
     val link: String,
 )
 
+/** A stage is a short headline, optionally followed by detail lines after a newline. */
+fun stageHeadline(stage: String) = stage.substringBefore('\n')
+
+fun stageDetail(stage: String) = stage.substringAfter('\n', "")
+
 data class LibraryItem(
     val episode: Episode,
     val addedAtMs: Long,

@@ -4,15 +4,23 @@ import android.content.Context
 import android.media.MediaMetadataRetriever
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import org.json.JSONArray
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.min
 
 data class FeedState(val loading: Boolean = false, val episodes: List<Episode> = emptyList(), val error: String = "")
@@ -21,7 +29,10 @@ data class FeedState(val loading: Boolean = false, val episodes: List<Episode> =
 object Repo {
     private const val CHUNK_SEC = 600
     /** Each round translates only what is still missing, in smaller batches so a model that skips or cuts off loses less. */
-    private val TRANSLATE_ROUNDS = listOf(25, 10, 5)
+    private val TRANSLATE_ROUNDS = listOf(10, 5)
+
+    /** After this many batches in a row bring back no Chinese, translating stops and says why. */
+    private const val MAX_FAILED_BATCHES = 3
 
     private lateinit var filesDir: File
     private lateinit var settingsStore: SettingsStore
@@ -35,6 +46,7 @@ object Repo {
 
     /** Episode id → what is being done to it right now. */
     val working = MutableStateFlow<Map<String, String>>(emptyMap())
+    private val jobs = ConcurrentHashMap<String, Job>()
 
     fun init(context: Context) {
         filesDir = context.filesDir
@@ -203,7 +215,7 @@ object Repo {
         if (working.value.containsKey(id)) return
         val episode = library.value.firstOrNull { it.episode.id == id }?.episode ?: return
         setStage(id, "排隊中")
-        scope.launch {
+        val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 updateItem(id) { copy(error = "") }
                 if (!audioFile(id).exists()) download(episode)
@@ -215,15 +227,25 @@ object Repo {
                     transcribe(episode, s)
                 }
                 updateItem(id) { copy(hasTranscript = true) }
-                translateMissing(id, s)
+                translateMissing(id)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 updateItem(id) { copy(error = e.message ?: e.javaClass.simpleName) }
             } finally {
-                working.update { it - id }
+                // A stopped job may finish after a new one has started; only the current job clears the stage.
+                if (jobs.remove(id, coroutineContext.job)) working.update { it - id }
             }
         }
+        jobs[id] = job
+        job.start()
+    }
+
+    /** Stops translating [id]. A call already sent to the AI ends on its own; its answer is thrown away. */
+    fun stop(id: String) {
+        jobs.remove(id)?.cancel() ?: return
+        working.update { it - id }
+        updateItem(id) { copy(error = "已停止翻譯（$translatedCount/$sentenceCount 句）") }
     }
 
     private fun download(episode: Episode) {
@@ -316,34 +338,61 @@ object Repo {
     /**
      * Translates every sentence that has no Chinese yet. Models sometimes skip sentences or send back a reply
      * that is cut off, so after each round whatever is still blank is sent again in smaller batches.
+     * Settings are read again for every batch, so switching the model in Settings takes effect right away.
      */
-    private suspend fun translateMissing(id: String, s: Settings) {
-        val provider = s.translatorProvider() ?: return
+    private suspend fun translateMissing(id: String) {
+        if (settings.value.translatorProvider() == null) return
         var list = transcripts.value[id] ?: readTranscript(id)
         updateItem(id) { withCounts(list) }
-        var unreadable: AiException? = null
-        for (batchSize in TRANSLATE_ROUNDS) {
+        var failedInARow = 0
+        var lastProblem = ""
+        TRANSLATE_ROUNDS.forEachIndexed { round, batchSize ->
             val missing = list.withIndex().filter { it.value.zh.isBlank() }
-            if (missing.isEmpty()) break
+            if (missing.isEmpty()) return
             for (batch in missing.chunked(batchSize)) {
-                setStage(id, "翻成中文 ${list.count { it.zh.isNotBlank() }}/${list.size} 句")
-                val translated = try {
-                    retrying { Ai.translate(s, provider, batch) }
-                } catch (e: AiException) {
-                    // A reply that cannot be read is worth another round; an HTTP error (bad key, no quota) is not.
-                    if (e.httpCode != 0) throw AiException("原稿好了，但翻譯失敗：${e.message}")
-                    unreadable = e
+                val s = settings.value
+                val provider = s.translatorProvider() ?: return
+                val done = list.count { it.zh.isNotBlank() }
+                var problem = ""
+                val translated = coroutineScope {
+                    val started = System.currentTimeMillis()
+                    val ticker = launch {
+                        while (true) {
+                            val waited = (System.currentTimeMillis() - started) / 1000
+                            val problem = if (lastProblem.isEmpty()) "" else "\n上一批：$lastProblem"
+                            setStage(id, "翻成中文 $done/${list.size} 句\n第 ${round + 1} 輪 · ${provider.label} 回覆中 $waited 秒$problem")
+                            delay(1000)
+                        }
+                    }
+                    try {
+                        retrying { Ai.translate(s, provider, batch) }
+                    } catch (e: AiException) {
+                        // A bad key or an empty quota will not fix itself; anything else is worth another batch.
+                        if (e.httpCode in setOf(400, 401, 403, 404, 410)) throw AiException("原稿好了，但翻譯失敗：${e.message}")
+                        problem = e.message.orEmpty()
+                        emptyMap<Int, Sentence>()
+                    } finally {
+                        ticker.cancel()
+                    }
+                }
+                currentCoroutineContext().ensureActive()
+                val useful = translated.filterValues { it.zh.isNotBlank() }
+                if (useful.isEmpty()) {
+                    lastProblem = problem.ifEmpty { "${provider.label} 回了，但沒有翻到這幾句" }
+                    if (++failedInARow >= MAX_FAILED_BATCHES) {
+                        throw AiException("中文翻了 $done/${list.size} 句，連續 $MAX_FAILED_BATCHES 批沒有進展。最後一次：$lastProblem。可以到設定換型號，再按「補翻譯」")
+                    }
                     continue
                 }
-                if (translated.isEmpty()) continue
-                list = list.mapIndexed { i, sentence -> translated[i]?.takeIf { it.zh.isNotBlank() } ?: sentence }
+                failedInARow = 0
+                lastProblem = ""
+                list = list.mapIndexed { i, sentence -> useful[i] ?: sentence }
                 saveTranscript(id, list)
             }
         }
         val left = list.count { it.zh.isBlank() }
         if (left > 0) {
-            val why = unreadable?.message?.let { "（$it）" }.orEmpty()
-            throw AiException("中文翻了 ${list.size - left}/${list.size} 句，還有 $left 句沒翻好$why，可以按「補翻譯」再試")
+            throw AiException("中文翻了 ${list.size - left}/${list.size} 句，還有 $left 句沒翻好，可以按「補翻譯」再試")
         }
     }
 

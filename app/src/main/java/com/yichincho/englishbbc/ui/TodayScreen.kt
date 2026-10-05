@@ -50,6 +50,7 @@ import com.yichincho.englishbbc.data.LibraryItem
 import com.yichincho.englishbbc.data.Repo
 import com.yichincho.englishbbc.data.Settings
 import com.yichincho.englishbbc.data.SpeedRule
+import com.yichincho.englishbbc.data.stageDetail
 import java.time.LocalDateTime
 
 @Composable
@@ -201,6 +202,9 @@ private fun FeaturedCard(item: LibraryItem, stage: String?, speed: Float, onOpen
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             EpisodeStatus(item, stage)
+            if (stage != null && stageDetail(stage).isNotEmpty()) {
+                Text(stageDetail(stage), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             if (item.error.isNotEmpty() && stage == null) {
                 Text(item.error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
@@ -209,6 +213,9 @@ private fun FeaturedCard(item: LibraryItem, stage: String?, speed: Float, onOpen
                     Icon(Icons.Rounded.PlayArrow, null)
                     Spacer(Modifier.width(6.dp))
                     Text(if (item.hasAudio) "開始聽 ${fmtSpeed(speed)}" else "聲音還在路上")
+                }
+                if (stage != null && stage.startsWith("翻成中文")) {
+                    FilledTonalButton(onClick = { Repo.stop(item.episode.id) }) { Text("停止") }
                 }
                 if (stage == null && (item.error.isNotEmpty() || !item.hasTranscript || !item.translationComplete)) {
                     FilledTonalButton(onClick = { Repo.prepare(item.episode.id) }) {
