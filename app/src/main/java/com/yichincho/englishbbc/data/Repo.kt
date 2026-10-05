@@ -20,7 +20,8 @@ data class FeedState(val loading: Boolean = false, val episodes: List<Episode> =
 /** App-wide state and the download → transcript → translation pipeline. */
 object Repo {
     private const val CHUNK_SEC = 600
-    private const val TRANSLATE_BATCH = 25
+    /** Each round translates only what is still missing, in smaller batches so a model that skips or cuts off loses less. */
+    private val TRANSLATE_ROUNDS = listOf(25, 10, 5)
 
     private lateinit var filesDir: File
     private lateinit var settingsStore: SettingsStore
@@ -42,7 +43,9 @@ object Repo {
         settingsStore = SettingsStore(context)
         settings.value = settingsStore.load()
         library.value = readArray("library.json").mapObjects(::libraryItemFromJson).map {
-            it.copy(hasAudio = audioFile(it.episode.id).exists(), hasTranscript = transcriptComplete(it.episode.id))
+            val item = it.copy(hasAudio = audioFile(it.episode.id).exists(), hasTranscript = transcriptComplete(it.episode.id))
+            // Libraries saved before the counts existed get them once from the transcript itself.
+            if (item.hasTranscript && item.sentenceCount == 0) item.withCounts(readTranscript(item.episode.id)) else item
         }
         saved.value = readArray("saved.json").mapObjects(::savedSentenceFromJson)
     }
@@ -178,9 +181,19 @@ object Repo {
         }
     }
 
+    private fun readTranscript(id: String): List<Sentence> = try {
+        JSONArray(transcriptFile(id).readText()).mapObjects(::sentenceFromJson)
+    } catch (e: Exception) {
+        emptyList()
+    }
+
+    private fun LibraryItem.withCounts(list: List<Sentence>) =
+        copy(sentenceCount = list.size, translatedCount = list.count { it.zh.isNotBlank() })
+
     private fun saveTranscript(id: String, list: List<Sentence>) {
         writeAtomically(transcriptFile(id)) { list.toJsonArray { it.toJson() }.toString() }
         transcripts.update { it + (id to list) }
+        updateItem(id) { withCounts(list) }
     }
 
     // ---- pipeline ----
@@ -300,22 +313,37 @@ object Repo {
         progressFile(id).delete()
     }
 
+    /**
+     * Translates every sentence that has no Chinese yet. Models sometimes skip sentences or send back a reply
+     * that is cut off, so after each round whatever is still blank is sent again in smaller batches.
+     */
     private suspend fun translateMissing(id: String, s: Settings) {
         val provider = s.translatorProvider() ?: return
-        var list = transcripts.value[id]
-            ?: JSONArray(transcriptFile(id).readText()).mapObjects(::sentenceFromJson)
-        val missing = list.withIndex().filter { it.value.zh.isBlank() }
-        var done = 0
-        for (batch in missing.chunked(TRANSLATE_BATCH)) {
-            setStage(id, "翻成中文 ${done * 100 / missing.size}%")
-            val translated = try {
-                retrying { Ai.translate(s, provider, batch) }
-            } catch (e: AiException) {
-                throw AiException("原稿好了，但翻譯失敗：${e.message}")
+        var list = transcripts.value[id] ?: readTranscript(id)
+        updateItem(id) { withCounts(list) }
+        var unreadable: AiException? = null
+        for (batchSize in TRANSLATE_ROUNDS) {
+            val missing = list.withIndex().filter { it.value.zh.isBlank() }
+            if (missing.isEmpty()) break
+            for (batch in missing.chunked(batchSize)) {
+                setStage(id, "翻成中文 ${list.count { it.zh.isNotBlank() }}/${list.size} 句")
+                val translated = try {
+                    retrying { Ai.translate(s, provider, batch) }
+                } catch (e: AiException) {
+                    // A reply that cannot be read is worth another round; an HTTP error (bad key, no quota) is not.
+                    if (e.httpCode != 0) throw AiException("原稿好了，但翻譯失敗：${e.message}")
+                    unreadable = e
+                    continue
+                }
+                if (translated.isEmpty()) continue
+                list = list.mapIndexed { i, sentence -> translated[i]?.takeIf { it.zh.isNotBlank() } ?: sentence }
+                saveTranscript(id, list)
             }
-            list = list.mapIndexed { i, sentence -> translated[i] ?: sentence }
-            saveTranscript(id, list)
-            done += batch.size
+        }
+        val left = list.count { it.zh.isBlank() }
+        if (left > 0) {
+            val why = unreadable?.message?.let { "（$it）" }.orEmpty()
+            throw AiException("中文翻了 ${list.size - left}/${list.size} 句，還有 $left 句沒翻好$why，可以按「補翻譯」再試")
         }
     }
 

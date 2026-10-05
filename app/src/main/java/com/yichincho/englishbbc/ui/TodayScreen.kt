@@ -198,8 +198,10 @@ private fun FeaturedCard(item: LibraryItem, stage: String?, speed: Float, onOpen
                     Spacer(Modifier.width(6.dp))
                     Text(if (item.hasAudio) "開始聽 ${fmtSpeed(speed)}" else "聲音還在路上")
                 }
-                if (stage == null && (item.error.isNotEmpty() || !item.hasTranscript)) {
-                    FilledTonalButton(onClick = { Repo.prepare(item.episode.id) }) { Text("再試一次") }
+                if (stage == null && (item.error.isNotEmpty() || !item.hasTranscript || !item.translationComplete)) {
+                    FilledTonalButton(onClick = { Repo.prepare(item.episode.id) }) {
+                        Text(if (item.hasTranscript) "補翻譯" else "再試一次")
+                    }
                 }
             }
         }

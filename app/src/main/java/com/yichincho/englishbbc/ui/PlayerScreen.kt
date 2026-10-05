@@ -95,6 +95,11 @@ fun PlayerScreen(
     // Also picks up a half-finished transcript, so the part already written can be read while the rest is made.
     LaunchedEffect(id, item.hasTranscript) { Repo.loadTranscript(id) }
 
+    // Fills in Chinese that an earlier run left out; after a failure it waits for「補翻譯」instead of retrying on every open.
+    LaunchedEffect(id, item.hasTranscript) {
+        if (item.hasTranscript && !item.translationComplete && item.error.isEmpty()) Repo.prepare(id)
+    }
+
     val loaded = player.mediaId == id
     val position = if (loaded) player.positionMs else item.lastPositionMs
     val duration = if (loaded && player.durationMs > 0) player.durationMs else item.episode.durationSec * 1000L
