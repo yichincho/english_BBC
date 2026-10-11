@@ -60,6 +60,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.yichincho.englishbbc.data.Ai
 import com.yichincho.englishbbc.data.DEFAULT_FEEDS
+import com.yichincho.englishbbc.data.MAX_VOLUME_BOOST_DB
 import com.yichincho.englishbbc.data.PRESET_MODELS
 import com.yichincho.englishbbc.data.Provider
 import com.yichincho.englishbbc.data.Repo
@@ -137,6 +138,21 @@ fun SettingsScreen(padding: PaddingValues, settings: Settings, now: LocalDateTim
                 ) { Text("從第 1 天重來") }
             }
         }
+
+        SectionLabel(
+            if (settings.volumeBoostDb == 0) "音量加強：關" else "音量加強：+${settings.volumeBoostDb} dB",
+            Modifier.padding(top = 8.dp),
+        )
+        Slider(
+            value = settings.volumeBoostDb.toFloat(),
+            onValueChange = { v -> Repo.updateSettings { it.copy(volumeBoostDb = v.roundToInt()) } },
+            valueRange = 0f..MAX_VOLUME_BOOST_DB.toFloat(),
+            steps = MAX_VOLUME_BOOST_DB - 1,
+        )
+        Text(
+            "手機音量開到最大還是太小（例如藍牙耳機）就往右拉；聲音開始破掉就往左一點。",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
 
         SectionLabel("原稿字體大小：${settings.fontSizeSp}", Modifier.padding(top = 8.dp))
         Slider(

@@ -14,6 +14,9 @@ val DEFAULT_FEEDS = listOf(
     Feed("Six O'Clock News", "https://podcasts.files.bbci.co.uk/b006qjxt.rss"),
 )
 
+/** Upper end of the volume boost slider; more than this mostly adds distortion. */
+const val MAX_VOLUME_BOOST_DB = 15
+
 enum class Provider(val label: String) { GEMINI("Gemini"), NVIDIA("NVIDIA"), DEEPSEEK("DeepSeek") }
 
 /** Popular models offered as one-tap choices before the key has been tested. */
@@ -44,6 +47,8 @@ data class Settings(
     val showZh: Boolean = true,
     /** Single-episode loop: when an episode ends it starts again from the top. */
     val loopEpisode: Boolean = false,
+    /** Extra loudness on top of the phone's own volume, in dB; BBC audio is quiet over Bluetooth. */
+    val volumeBoostDb: Int = 6,
     val enabledFeeds: Set<String> = setOf(DEFAULT_FEEDS[0].url, DEFAULT_FEEDS[1].url),
     val customFeeds: List<Feed> = emptyList(),
 ) {
@@ -106,6 +111,7 @@ class SettingsStore(context: Context) {
             fontSizeSp = prefs.getInt("fontSizeSp", d.fontSizeSp),
             showZh = prefs.getBoolean("showZh", d.showZh),
             loopEpisode = prefs.getBoolean("loopEpisode", d.loopEpisode),
+            volumeBoostDb = prefs.getInt("volumeBoostDb", d.volumeBoostDb),
             enabledFeeds = prefs.getStringSet("enabledFeeds", d.enabledFeeds)!!.toSet(),
             customFeeds = custom,
         )
@@ -121,6 +127,7 @@ class SettingsStore(context: Context) {
             .putLong("cycleStartEpochDay", s.cycleStartEpochDay)
             .putInt("fontSizeSp", s.fontSizeSp).putBoolean("showZh", s.showZh)
             .putBoolean("loopEpisode", s.loopEpisode)
+            .putInt("volumeBoostDb", s.volumeBoostDb)
             .putStringSet("enabledFeeds", s.enabledFeeds)
             .putString("customFeeds", s.customFeeds.toJsonArray { JSONObject().put("title", it.title).put("url", it.url) }.toString())
             .apply()
