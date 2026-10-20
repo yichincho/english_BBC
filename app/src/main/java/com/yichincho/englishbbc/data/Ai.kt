@@ -288,7 +288,8 @@ object Ai {
                     ?: models.filter { "flash" in it && unwanted.none { u -> u in it } }.maxOrNull()
             }
             Provider.NVIDIA -> models.filter { it.startsWith("deepseek-ai/deepseek-v") }.maxOrNull()
-            Provider.DEEPSEEK -> models.firstOrNull { "chat" in it } ?: models.firstOrNull { "flash" in it } ?: models.first()
+            Provider.DEEPSEEK -> models.firstOrNull { it == "deepseek-flash" }
+                ?: models.firstOrNull { "flash" in it } ?: models.first()
         }
         return pick ?: current
     }
