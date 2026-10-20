@@ -19,6 +19,12 @@ const val MAX_VOLUME_BOOST_DB = 15
 
 enum class Provider(val label: String) { GEMINI("Gemini"), NVIDIA("NVIDIA"), DEEPSEEK("DeepSeek") }
 
+/** Retired official DeepSeek aliases: migrate only known legacy values, not user-selected models. */
+fun migrateLegacyDeepSeekModel(model: String): String = when (model) {
+    "deepseek-chat", "deepseek-reasoner" -> "deepseek-flash"
+    else -> model
+}
+
 /** Popular models offered as one-tap choices before the key has been tested. */
 val PRESET_MODELS: Map<Provider, List<String>> = mapOf(
     Provider.NVIDIA to listOf(
@@ -36,7 +42,7 @@ data class Settings(
     val nvidiaKey: String = "",
     val nvidiaModel: String = "deepseek-ai/deepseek-v4.1-flash",
     val deepseekKey: String = "",
-    val deepseekModel: String = "deepseek-chat",
+    val deepseekModel: String = "deepseek-flash",
     /** "auto" or a [Provider] name. */
     val translator: String = "auto",
     /** Minutes since midnight. */
@@ -92,6 +98,10 @@ class SettingsStore(context: Context) {
 
     fun load(): Settings {
         val d = Settings()
+        // Persist migration so old model IDs cannot reappear on subsequent launches.
+        val oldDeepSeek = prefs.getString("deepseekModel", d.deepseekModel)!!
+        val migratedDeepSeek = migrateLegacyDeepSeekModel(oldDeepSeek)
+        if (migratedDeepSeek != oldDeepSeek) prefs.edit().putString("deepseekModel", migratedDeepSeek).apply()
         if (!prefs.contains("cycleStartEpochDay")) {
             prefs.edit().putLong("cycleStartEpochDay", LocalDate.now().toEpochDay()).apply()
         }
@@ -103,7 +113,7 @@ class SettingsStore(context: Context) {
             nvidiaKey = prefs.getString("nvidiaKey", d.nvidiaKey)!!,
             nvidiaModel = prefs.getString("nvidiaModel", d.nvidiaModel)!!,
             deepseekKey = prefs.getString("deepseekKey", d.deepseekKey)!!,
-            deepseekModel = prefs.getString("deepseekModel", d.deepseekModel)!!,
+            deepseekModel = migrateLegacyDeepSeekModel(prefs.getString("deepseekModel", d.deepseekModel)!!),
             translator = prefs.getString("translator", d.translator)!!,
             nightStartMinute = prefs.getInt("nightStartMinute", d.nightStartMinute),
             dayStartMinute = prefs.getInt("dayStartMinute", d.dayStartMinute),
