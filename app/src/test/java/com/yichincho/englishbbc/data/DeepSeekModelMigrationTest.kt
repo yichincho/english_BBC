@@ -1,0 +1,31 @@
+package com.yichincho.englishbbc.data
+
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class DeepSeekModelMigrationTest {
+    @Test fun migrateOldChatAlias() {
+        assertEquals("deepseek-flash", migrateLegacyDeepSeekModel("deepseek-chat"))
+    }
+
+    @Test fun migrateOldReasonerAlias() {
+        assertEquals("deepseek-flash", migrateLegacyDeepSeekModel("deepseek-reasoner"))
+    }
+
+    @Test fun preserveCustomModelAndCurrentModel() {
+        assertEquals("deepseek-flash", migrateLegacyDeepSeekModel("deepseek-flash"))
+        assertEquals("deepseek-v4-pro", migrateLegacyDeepSeekModel("deepseek-v4-pro"))
+        assertEquals("custom-model", migrateLegacyDeepSeekModel("custom-model"))
+    }
+
+    @Test fun defaultsUseCurrentOfficialAndExistingNvidiaModels() {
+        val settings = Settings()
+        assertEquals("deepseek-flash", settings.deepseekModel)
+        assertEquals("deepseek-ai/deepseek-v4.1-flash", settings.nvidiaModel)
+    }
+
+    @Test fun modelSuggestionPrefersCurrentOfficialId() {
+        val available = listOf("deepseek-v4-pro", "deepseek-flash", "deepseek-chat")
+        assertEquals("deepseek-flash", Ai.suggestModel(Provider.DEEPSEEK, available, "not-listed"))
+    }
+}
