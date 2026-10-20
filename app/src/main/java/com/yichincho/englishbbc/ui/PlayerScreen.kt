@@ -136,7 +136,7 @@ fun PlayerScreen(
             when {
                 sentences.isEmpty() -> NoTranscript(item, stage)
                 hidden -> HiddenTranscript()
-                else -> TranscriptList(sentences, current, settings, onTap = ::jumpTo)
+                else -> TranscriptList(id, sentences, current, settings, onTap = ::jumpTo)
             }
         }
 
@@ -212,7 +212,7 @@ private fun TopBar(title: String, speed: Float, autoSpeed: Float, player: Player
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TranscriptList(sentences: List<Sentence>, current: Int, settings: Settings, onTap: (Int) -> Unit) {
+private fun TranscriptList(episodeId: String, sentences: List<Sentence>, current: Int, settings: Settings, onTap: (Int) -> Unit) {
     val listState = rememberLazyListState()
     LaunchedEffect(current) {
         if (current >= 0 && !listState.isScrollInProgress) listState.animateScrollToItem((current - 1).coerceAtLeast(0))
@@ -240,6 +240,7 @@ private fun TranscriptList(sentences: List<Sentence>, current: Int, settings: Se
                         else -> MaterialTheme.colorScheme.onSurface
                     },
                 )
+                LongSentenceBreakdown(episodeId, s.startMs, s.en, settings)
                 if (settings.showZh && s.zh.isNotBlank()) {
                     Text(
                         s.zh,
