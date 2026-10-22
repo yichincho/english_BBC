@@ -1,6 +1,7 @@
 package com.yichincho.englishbbc.data
 
 import android.content.Context
+import ai.models.Catalog
 import android.media.MediaMetadataRetriever
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -43,6 +44,8 @@ object Repo {
     val saved = MutableStateFlow<List<SavedSentence>>(emptyList())
     val transcripts = MutableStateFlow<Map<String, List<Sentence>>>(emptyMap())
     val feeds = MutableStateFlow<Map<String, FeedState>>(emptyMap())
+    /** The shared model list from yichincho/ai-models; null until the bundled copy has been read. */
+    val catalog = MutableStateFlow<Catalog?>(null)
 
     /** Episode id → what is being done to it right now. */
     val working = MutableStateFlow<Map<String, String>>(emptyMap())
@@ -60,7 +63,15 @@ object Repo {
             if (item.hasTranscript && item.sentenceCount == 0) item.withCounts(readTranscript(item.episode.id)) else item
         }
         saved.value = readArray("saved.json").mapObjects(::savedSentenceFromJson)
+        val bundled = context.assets.open("models.json").bufferedReader().use { it.readText() }
+        catalog.value = runCatching { Catalog.parse(bundled) }.getOrNull()
+        // The online list is newer than the copy in the APK; it replaces it as soon as it arrives.
+        scope.launch { catalog.value = Catalog.load(File(filesDir, "models.json"), bundled) }
     }
+
+    /** Models to offer for [p]: the shared list's working ones first, else the built-in presets. */
+    fun presetModels(p: Provider): List<String> =
+        catalog.value?.get(p.name)?.choices()?.takeIf { it.isNotEmpty() } ?: PRESET_MODELS[p].orEmpty()
 
     fun audioFile(id: String) = File(filesDir, "audio/$id.mp3")
     private fun transcriptFile(id: String) = File(filesDir, "transcripts/$id.json")
