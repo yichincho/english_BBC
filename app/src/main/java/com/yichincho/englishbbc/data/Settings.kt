@@ -25,20 +25,34 @@ fun migrateLegacyDeepSeekModel(model: String): String = when (model) {
     else -> model
 }
 
-/** Popular models offered as one-tap choices before the key has been tested. */
+/**
+ * Models offered as one-tap choices before the key has been tested. NVIDIA's free endpoints change almost
+ * weekly (checked 2026-10), so Settings can probe each one; the order puts the steadiest first.
+ */
 val PRESET_MODELS: Map<Provider, List<String>> = mapOf(
     Provider.NVIDIA to listOf(
         "deepseek-ai/deepseek-v4.1-flash",
-        "z-ai/glm-5.3",
         "z-ai/glm-5.3-flash",
-        "nvidia/nemotron-3-super-120b-a12b",
+        "z-ai/glm-5.3",
+        "z-ai/glm-5.2",
         "nvidia/nemotron-3-ultra-550b-a55b",
+        "nvidia/nemotron-3.5-lightning-30b-a3b",
+        "google/gemma-4-31b-it",
+        "openai/gpt-oss-20b",
+    ),
+    Provider.GEMINI to listOf(
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-3.8-flash",
+        "gemini-flash-latest",
+        "gemini-3.5-flash-lite",
     ),
 )
 
 data class Settings(
     val geminiKey: String = "",
-    val geminiModel: String = "gemini-flash-latest",
+    val geminiModel: String = "gemini-3.7-flash",
     val nvidiaKey: String = "",
     val nvidiaModel: String = "deepseek-ai/deepseek-v4.1-flash",
     val deepseekKey: String = "",

@@ -192,6 +192,9 @@ private fun ProviderRow(p: Provider, settings: Settings) {
     var failed by remember { mutableStateOf(false) }
     var models by remember { mutableStateOf<List<String>>(emptyList()) }
     var modelMenu by remember { mutableStateOf(false) }
+    // Model → null when it answered the probe, else why not. Missing means not tried yet.
+    var probed by remember { mutableStateOf<Map<String, String?>>(emptyMap()) }
+    var probing by remember { mutableStateOf(false) }
     val presets = PRESET_MODELS[p].orEmpty()
     val choices = presets + (models - presets.toSet())
     // Typed text lives here and is written through, so the cursor never waits on the settings round trip.
@@ -265,7 +268,14 @@ private fun ProviderRow(p: Provider, settings: Settings) {
                     ) {
                         choices.forEach { m ->
                             DropdownMenuItem(
-                                text = { Text(m) },
+                                text = {
+                                    val mark = when {
+                                        m !in probed -> ""
+                                        probed[m] == null -> "✓ "
+                                        else -> "✗ "
+                                    }
+                                    Text(mark + m)
+                                },
                                 onClick = {
                                     model = m
                                     Repo.updateSettings { it.withModel(p, m) }
@@ -304,6 +314,28 @@ private fun ProviderRow(p: Provider, settings: Settings) {
                             }
                         },
                     ) { Text(if (testing) "測試中" else "測試金鑰") }
+                    if (presets.isNotEmpty()) {
+                        TextButton(
+                            enabled = key.isNotBlank() && !probing,
+                            onClick = {
+                                probing = true
+                                probed = emptyMap()
+                                scope.launch {
+                                    Repo.probeModels(p, key, presets) { m, reason -> probed = probed + (m to reason) }
+                                    probing = false
+                                    val ok = presets.filter { it in probed && probed[it] == null }
+                                    failed = ok.isEmpty()
+                                    message = if (ok.isEmpty()) "建議型號都不能用，按「測試金鑰」看完整清單。"
+                                    else "能用的型號：${ok.joinToString("、")}（選單中打 ✓）"
+                                    if (model in probed && probed[model] != null && ok.isNotEmpty()) {
+                                        model = ok.first()
+                                        Repo.updateSettings { it.withModel(p, model) }
+                                        message += "\n原本的型號不能用，已換成 $model。"
+                                    }
+                                }
+                            },
+                        ) { Text(if (probing) "逐一測試中 ${probed.size}/${presets.size}" else "測試建議型號") }
+                    }
                 }
                 if (message.isNotEmpty()) {
                     Text(

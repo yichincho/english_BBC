@@ -403,4 +403,13 @@ object Repo {
             Result.failure(e)
         }
     }
+
+    /** Probes every model in [models] one by one; [onEach] gets null for a model that answered. */
+    suspend fun probeModels(p: Provider, key: String, models: List<String>, onEach: (String, String?) -> Unit) =
+        withContext(Dispatchers.IO) {
+            models.forEach { m ->
+                val reason = Ai.probe(p, key, m)
+                withContext(Dispatchers.Main) { onEach(m, reason) }
+            }
+        }
 }
