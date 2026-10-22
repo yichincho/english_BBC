@@ -28,4 +28,13 @@ class DeepSeekModelMigrationTest {
         val available = listOf("deepseek-v4-pro", "deepseek-flash", "deepseek-chat")
         assertEquals("deepseek-flash", Ai.suggestModel(Provider.DEEPSEEK, available, "not-listed"))
     }
+
+    @Test fun geminiSuggestionPrefersFlash37ThenOlderFlash() {
+        assertEquals("gemini-3.7-flash", Ai.suggestModel(Provider.GEMINI, listOf("gemini-3.8-flash", "gemini-3.7-flash"), "gone"))
+        assertEquals("gemini-3.5-flash", Ai.suggestModel(Provider.GEMINI, listOf("gemini-3.8-flash", "gemini-3.5-flash"), "gone"))
+    }
+
+    @Test fun nvidiaFallsBackToGlmWhenNoDeepSeek() {
+        assertEquals("z-ai/glm-5.3-flash", Ai.suggestModel(Provider.NVIDIA, listOf("z-ai/glm-5.3-flash", "openai/gpt-oss-20b"), "gone"))
+    }
 }

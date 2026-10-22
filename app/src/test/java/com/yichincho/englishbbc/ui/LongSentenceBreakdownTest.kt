@@ -7,7 +7,8 @@ import org.junit.Test
 
 class LongSentenceBreakdownTest {
     private val original = "Although researchers expected good results, the evidence collected during the experiment suggested that factors were overlooked."
-    private val valid = """{"pattern":"SVO","subject":"the evidence","verb":"suggested","remainder":"that factors were overlooked","skeletonZh":"證據顯示因素被忽略","chunks":[{"source":"Although researchers expected good results","role":"讓步子句","zh":"雖然研究員預期結果很好"},{"source":"collected during the experiment","role":"分詞修飾","zh":"實驗期間蒐集的"}],"summaryZh":"研究員原先樂觀，但結果顯示有因素被忽略。","simpleEnglish":"Researchers expected good results. However, the evidence showed that factors were overlooked."}"""
+    private val valid = """{"pattern":"SVO","core":[{"label":"A","text":"Although researchers expected good results","zh":"雖然研究員預期結果很好","children":[]},{"label":"S","text":"the evidence collected during the experiment","zh":"實驗中蒐集的證據","children":[{"source":"collected during the experiment","kind":"分詞片語","function":"修飾 evidence","zh":"實驗期間蒐集的","children":[]}]},{"label":"V","text":"suggested","zh":"顯示","children":[]},{"label":"O","text":"that factors were overlooked","zh":"有因素被忽略","children":[{"source":"that factors were overlooked","kind":"名詞子句（that）","function":"作 suggested 的受詞","zh":"因素被忽略","children":[{"source":"were overlooked","kind":"被動語態","function":"說明 factors","zh":"被忽略","children":[]}]}]}],"skeletonZh":"證據顯示因素被忽略","summaryZh":"研究員原先樂觀，但結果顯示有因素被忽略。","simpleEnglish":"Researchers expected good results. However, the evidence showed that factors were overlooked."}"""
+    private val legacyV2 = """{"pattern":"SVO","subject":"the evidence","verb":"suggested","remainder":"that factors were overlooked","skeletonZh":"證據顯示因素被忽略","chunks":[{"source":"Although researchers expected good results","role":"讓步子句","zh":"雖然研究員預期結果很好"}],"summaryZh":"摘要","simpleEnglish":"The evidence showed a problem."}"""
 
     @Test fun shortSentenceDoesNotQualify() {
         assertFalse(LongSentenceDetector.qualifies("The apple is red."))
@@ -36,10 +37,11 @@ class LongSentenceBreakdownTest {
         assertEquals(4, LongSentenceDetector.wordCount("The apple is red."))
     }
 
-    @Test fun validJsonParsesAndRoundTrips() {
+    @Test fun validJsonParsesNestedLayersAndRoundTrips() {
         val result = SentenceDna.parse(valid, original)
         assertEquals("SVO", result.pattern)
-        assertEquals(2, result.chunks.size)
+        assertEquals(listOf("A", "S", "V", "O"), result.core.map { it.label })
+        assertEquals(3, result.core.last().children.first().depth())
         assertEquals(result, SentenceDna.parse(result.toJson(), original))
     }
 
@@ -49,8 +51,8 @@ class LongSentenceBreakdownTest {
     }
 
     @Test(expected = IllegalArgumentException::class)
-    fun inventedEnglishChunkIsRejected() {
-        SentenceDna.parse(valid.replace("collected during the experiment", "invented by the model"), original)
+    fun inventedEnglishInNestedNodeIsRejected() {
+        SentenceDna.parse(valid.replace("\"source\":\"were overlooked\"", "\"source\":\"invented by the model\""), original)
     }
 
     @Test(expected = IllegalArgumentException::class)
@@ -59,8 +61,20 @@ class LongSentenceBreakdownTest {
     }
 
     @Test(expected = IllegalArgumentException::class)
-    fun outOfOrderChunksAreRejected() {
-        val reversed = """{"pattern":"SVO","subject":"the evidence","verb":"suggested","remainder":"","skeletonZh":"證據顯示","chunks":[{"source":"collected during the experiment","role":"修飾","zh":"蒐集"},{"source":"Although researchers expected good results","role":"讓步","zh":"雖然"}],"summaryZh":"摘要","simpleEnglish":"The evidence showed a problem."}"""
+    fun unknownCoreLabelIsRejected() {
+        SentenceDna.parse(valid.replace("\"label\":\"O\"", "\"label\":\"X\""), original)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun outOfOrderCoreIsRejected() {
+        val reversed = """{"pattern":"SV","core":[{"label":"V","text":"suggested","zh":"","children":[]},{"label":"S","text":"the evidence","zh":"","children":[]}],"skeletonZh":"證據顯示","summaryZh":"摘要","simpleEnglish":"The evidence showed a problem."}"""
         SentenceDna.parse(reversed, original)
+    }
+
+    @Test fun legacyV2AnalysisIsStillReadable() {
+        val result = SentenceDna.fromLegacy(legacyV2, original)
+        assertTrue(result.legacy)
+        assertEquals(listOf("S", "V", "O", "A"), result.core.map { it.label })
+        assertEquals("讓步子句", result.core.last().children.single().kind)
     }
 }

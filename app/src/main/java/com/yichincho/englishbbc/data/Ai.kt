@@ -278,16 +278,27 @@ object Ai {
         return models
     }
 
+    /** Sends a one-word chat to [model]; null when it answers, otherwise the short reason it did not. */
+    fun probe(p: Provider, key: String, model: String): String? = try {
+        if (p == Provider.GEMINI) Gemini.chatJson(key, model, "Reply with the JSON {\"ok\":true}.", "hi", 30)
+        else OpenAiCompat.chat(p, key, model, "Reply with OK.", "hi", maxTokens = 8, timeoutSec = 30)
+        null
+    } catch (e: Exception) {
+        e.message ?: "沒有回應"
+    }
+
     /** Keeps [current] if the provider still offers it; providers retire models often, so otherwise pick a likely one. */
     fun suggestModel(p: Provider, models: List<String>, current: String): String {
         if (current in models || models.isEmpty()) return current
         val pick = when (p) {
             Provider.GEMINI -> {
                 val unwanted = listOf("lite", "image", "tts", "live", "audio", "embedding", "robotics", "computer")
-                models.firstOrNull { it == "gemini-flash-latest" }
+                listOf("gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.8-flash", "gemini-flash-latest")
+                    .firstOrNull { it in models }
                     ?: models.filter { "flash" in it && unwanted.none { u -> u in it } }.maxOrNull()
             }
             Provider.NVIDIA -> models.filter { it.startsWith("deepseek-ai/deepseek-v") }.maxOrNull()
+                ?: models.firstOrNull { it.startsWith("z-ai/glm-") }
             Provider.DEEPSEEK -> models.firstOrNull { it == "deepseek-flash" }
                 ?: models.firstOrNull { "flash" in it } ?: models.first()
         }

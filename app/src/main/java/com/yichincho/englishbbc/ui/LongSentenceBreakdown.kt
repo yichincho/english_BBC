@@ -1,18 +1,25 @@
 package com.yichincho.englishbbc.ui
 
 import android.content.Context
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Button
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -20,18 +27,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.yichincho.englishbbc.data.Gemini
 import com.yichincho.englishbbc.data.OpenAiCompat
 import com.yichincho.englishbbc.data.Provider
 import com.yichincho.englishbbc.data.Settings
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 
 internal object LongSentenceDetector {
     fun wordCount(text: String): Int = Regex("[A-Za-z]+(?:['’][A-Za-z]+)?").findAll(text).count()
@@ -44,114 +55,270 @@ internal object LongSentenceDetector {
     }
 }
 
-internal data class GrammarChunk(val source: String, val role: String, val zh: String)
+/** One clause or phrase hung on a core part (or on another node), with what it adds there. */
+internal data class DnaNode(
+    val source: String,
+    val kind: String,
+    val function: String,
+    val zh: String,
+    val children: List<DnaNode> = emptyList(),
+) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("source", source).put("kind", kind).put("function", function).put("zh", zh)
+        .put("children", JSONArray().also { arr -> children.forEach { arr.put(it.toJson()) } })
+
+    fun count(): Int = 1 + children.sumOf { it.count() }
+    fun depth(): Int = 1 + (children.maxOfOrNull { it.depth() } ?: 0)
+}
+
+/** One slot of the basic pattern: S, V, O, IO, DO, C, OC, or A for a sentence-level adverbial. */
+internal data class CorePart(val label: String, val text: String, val zh: String, val children: List<DnaNode>) {
+    fun toJson(): JSONObject = JSONObject()
+        .put("label", label).put("text", text).put("zh", zh)
+        .put("children", JSONArray().also { arr -> children.forEach { arr.put(it.toJson()) } })
+}
+
 internal data class SentenceDna(
     val pattern: String,
-    val subject: String,
-    val verb: String,
-    val remainder: String,
+    val core: List<CorePart>,
     val skeletonZh: String,
-    val chunks: List<GrammarChunk>,
     val summaryZh: String,
     val simpleEnglish: String,
+    /** True when this came from the older flat V2 analysis and has no nested layers. */
+    val legacy: Boolean = false,
 ) {
     fun toJson(): String = JSONObject()
-        .put("pattern", pattern).put("subject", subject).put("verb", verb)
-        .put("remainder", remainder).put("skeletonZh", skeletonZh)
-        .put("chunks", JSONArray().also { arr -> chunks.forEach { arr.put(JSONObject()
-            .put("source", it.source).put("role", it.role).put("zh", it.zh)) } })
-        .put("summaryZh", summaryZh).put("simpleEnglish", simpleEnglish).toString()
+        .put("pattern", pattern)
+        .put("core", JSONArray().also { arr -> core.forEach { arr.put(it.toJson()) } })
+        .put("skeletonZh", skeletonZh).put("summaryZh", summaryZh).put("simpleEnglish", simpleEnglish)
+        .put("legacy", legacy).toString()
 
     companion object {
         private val patterns = setOf("SV", "SVC", "SVO", "SVOO", "SVOC")
-        fun parse(raw: String, original: String): SentenceDna {
+        val labels = setOf("S", "V", "O", "IO", "DO", "C", "OC", "A")
+        const val MAX_DEPTH = 4
+        const val MAX_NODES = 14
+
+        private fun objectOf(raw: String): JSONObject {
             // Ignore completed reasoning wrappers and Markdown fences.
             val clean = raw.replace(Regex("(?s)<think>.*?</think>"), "").trim()
             val start = clean.indexOf('{')
             val end = clean.lastIndexOf('}')
             require(start >= 0 && end > start) { "AI 未產生可辨識的 JSON，請重試或切換模型" }
-            val obj = runCatching { JSONObject(clean.substring(start, end + 1)) }
+            return runCatching { JSONObject(clean.substring(start, end + 1)) }
                 .getOrElse { throw IllegalArgumentException("AI 回傳的 JSON 格式不正確") }
-            fun field(name: String): String = obj.optString(name).trim().also {
-                require(it.isNotEmpty()) { "AI 缺少必要欄位：$name" }
-            }
-            val pattern = field("pattern")
-            require(pattern in patterns) { "AI 回傳非五大基本句型：$pattern" }
-            val arr = obj.optJSONArray("chunks") ?: throw IllegalArgumentException("AI 缺少 Chunks")
-            require(arr.length() in 1..5) { "AI 的 Chunks 數量必須介於 1～5" }
-            val chunks = (0 until arr.length()).map { i ->
-                val o = arr.optJSONObject(i) ?: throw IllegalArgumentException("Chunk 格式錯誤")
+        }
+
+        private fun JSONObject.field(name: String): String = optString(name).trim().also {
+            require(it.isNotEmpty()) { "AI 缺少必要欄位：$name" }
+        }
+
+        private fun nodes(arr: JSONArray?, original: String, level: Int): List<DnaNode> {
+            if (arr == null || arr.length() == 0) return emptyList()
+            require(level <= MAX_DEPTH) { "AI 的層次超過 $MAX_DEPTH 層" }
+            return (0 until arr.length()).map { i ->
+                val o = arr.optJSONObject(i) ?: throw IllegalArgumentException("子句格式錯誤")
                 val source = o.optString("source").trim()
-                val role = o.optString("role").trim()
+                val kind = o.optString("kind").trim()
                 val zh = o.optString("zh").trim()
-                require(source.isNotBlank() && role.isNotBlank() && zh.isNotBlank()) { "Chunk 欄位不可空白" }
+                require(source.isNotBlank() && kind.isNotBlank() && zh.isNotBlank()) { "子句欄位不可空白" }
                 require(original.contains(source)) { "AI 修改了原文語塊，請重試" }
-                GrammarChunk(source, role, zh)
+                DnaNode(source, kind, o.optString("function").trim(), zh, nodes(o.optJSONArray("children"), original, level + 1))
             }
-            // Each cited source fragment must appear in the same order as the transcript.
+        }
+
+        fun parse(raw: String, original: String): SentenceDna {
+            val obj = objectOf(raw)
+            val pattern = obj.field("pattern")
+            require(pattern in patterns) { "AI 回傳非五大基本句型：$pattern" }
+            val arr = obj.optJSONArray("core") ?: throw IllegalArgumentException("AI 缺少主幹 core")
+            val core = (0 until arr.length()).map { i ->
+                val o = arr.optJSONObject(i) ?: throw IllegalArgumentException("主幹格式錯誤")
+                val label = o.optString("label").trim().uppercase()
+                val text = o.optString("text").trim()
+                require(label in labels) { "主幹標籤不正確：$label" }
+                require(text.isNotBlank()) { "主幹欄位不可空白" }
+                require(original.contains(text)) { "主幹「$label」無法在原文中定位" }
+                CorePart(label, text, o.optString("zh").trim(), nodes(o.optJSONArray("children"), original, 1))
+            }
+            require(core.any { it.label == "S" } && core.any { it.label == "V" }) { "主幹至少要有 S 與 V" }
+            // Core slots are listed as they appear in the transcript.
             var offset = 0
-            for (chunk in chunks) {
-                val found = original.indexOf(chunk.source, offset)
-                require(found >= 0) { "AI 語塊順序與原文不同" }
-                offset = found + chunk.source.length
+            for (part in core) {
+                val found = original.indexOf(part.text, offset)
+                require(found >= 0) { "AI 主幹順序與原文不同" }
+                offset = found + part.text.length
             }
-            val subject = field("subject")
-            val verb = field("verb")
-            require(original.contains(subject) && original.contains(verb)) { "主詞或動詞無法在原文中定位" }
-            val simple = field("simpleEnglish")
+            val total = core.sumOf { p -> p.children.sumOf { it.count() } }
+            require(total <= MAX_NODES) { "AI 拆得太碎（$total 個子句）" }
+            val simple = obj.field("simpleEnglish")
             require(simple.length <= 500) { "簡化英文過長" }
-            return SentenceDna(pattern, subject, verb, obj.optString("remainder").trim(),
-                field("skeletonZh"), chunks, field("summaryZh"), simple)
+            return SentenceDna(pattern, core, obj.field("skeletonZh"), obj.field("summaryZh"), simple,
+                obj.optBoolean("legacy", false))
+        }
+
+        /** Reads a V2 flat analysis so sentences already paid for keep showing without a new call. */
+        fun fromLegacy(raw: String, original: String): SentenceDna {
+            val obj = objectOf(raw)
+            val pattern = obj.field("pattern")
+            require(pattern in patterns) { "舊版句型不正確" }
+            val chunks = (obj.optJSONArray("chunks") ?: JSONArray()).let { a ->
+                (0 until a.length()).mapNotNull { a.optJSONObject(it) }.map {
+                    DnaNode(it.optString("source").trim(), it.optString("role").trim(), "", it.optString("zh").trim())
+                }.filter { it.source.isNotBlank() && original.contains(it.source) }
+            }
+            val restLabel = when (pattern) { "SVC" -> "C"; "SV" -> "A"; else -> "O" }
+            val core = buildList {
+                add(CorePart("S", obj.field("subject"), "", emptyList()))
+                add(CorePart("V", obj.field("verb"), "", emptyList()))
+                obj.optString("remainder").trim().takeIf { it.isNotBlank() }?.let { add(CorePart(restLabel, it, "", emptyList())) }
+            }
+            val withChunks = if (chunks.isEmpty()) core else core + CorePart("A", "", "其他修飾", chunks)
+            return SentenceDna(pattern, withChunks, obj.field("skeletonZh"), obj.field("summaryZh"),
+                obj.field("simpleEnglish"), legacy = true)
         }
     }
 }
 
 internal object SentenceDnaService {
-    // Versioned cache prevents stale V1 analysis from being mistaken for V2.
-    private const val VERSION = "dna-v2"
-    private const val SYSTEM = """你是協助台灣學生閱讀 BBC 的英文文法老師。
-分析「一個英文長句」。先找主句的五大基本句型 SV/SVC/SVO/SVOO/SVOC；補充說明關係子句、名詞子句、形容詞子句、副詞子句、分詞片語如何附加在主幹。
-不要逐字對齊，不要逐字翻譯，也不要用長篇教科書式解說。
-僅回傳一個 JSON 物件，欄位 EXACTLY：
-{"pattern":"SVO","subject":"原文中逐字存在的主詞文字","verb":"原文中逐字存在的主要動詞文字","remainder":"主句剩餘必要部分的簡短原文","skeletonZh":"一句繁體中文主幹意思","chunks":[{"source":"原文連續且完全相同的片段","role":"例如讓步子句／關係子句／名詞子句／分詞修飾","zh":"繁體中文語意"}],"summaryZh":"一句繁中摘要","simpleEnglish":"一至兩句簡明自然英文重述"}。
+    // Versioned cache prevents an older schema from being parsed as the current one.
+    private const val VERSION = "dna-v3"
+    private const val LEGACY_VERSION = "dna-v2"
+    private const val PREFS = "sentence_dna_v3"
+    private const val LEGACY_PREFS = "sentence_dna_v2"
+    private const val SYSTEM = """你是協助台灣學生閱讀 BBC 的英文文法老師。請把「一個英文長句」拆成一層一層的結構樹。
+第一層 core：主句的五大基本句型 SV/SVC/SVO/SVOO/SVOC，依原文順序列出每個槽位：
+  label 只能是 S、V、O、IO、DO、C、OC，或 A（句首／句尾的副詞子句、呼語、插入語等句子層級修飾）。
+  text 是該槽位在原文中「完整」的逐字片段（例如 C 是 that 名詞子句時，text 要包含整個 that 子句及其後所有附屬成分）。
+第二層以後 children：說明這個槽位裡面又包了什麼——名詞子句、關係子句（形容詞子句）、副詞子句（條件／原因／讓步／時間／目的）、分詞片語、不定詞片語、介系詞片語、同位語、比較結構。
+  每個 child 的 source 是 parent 範圍內的逐字片段；若 child 裡面還有子句，就再放進它自己的 children，最多 4 層。
+  kind 寫結構種類（例如「名詞子句（that）」「副詞子句（原因 because）」「關係子句」「介系詞片語」）。
+  function 寫它在上一層扮演的角色（例如「作 surprised 的受詞」「修飾 movement」「說明為什麼」）。
+  zh 寫這段的繁體中文意思。
+僅回傳一個 JSON 物件，格式：
+{"pattern":"SVC","core":[{"label":"S","text":"原文片段","zh":"中文","children":[{"source":"原文片段","kind":"名詞子句（what）","function":"作主詞","zh":"中文","children":[]}]},{"label":"V","text":"is","zh":"是","children":[]}],"skeletonZh":"一句繁體中文主幹意思","summaryZh":"一句繁中摘要","simpleEnglish":"一至兩句簡明自然英文重述"}
 重要限制：
-1. chunks 只選 1～5 個真正影響理解的子句／修飾語；source 必須為原文中逐字存在且連續的片段，順序與原文相同，不可拼接、改字或重疊。
-2. subject / verb 也必須為原文逐字存在的連續文字。不要把引號內的子句誤認為外層主句。
-3. 主句若有 that 名詞子句作受詞，pattern 仍可為 SVO；其他修飾結構不算新的五大句型。
+1. text / source 必須是原文中逐字存在且連續的片段，不可改字、拼接或補字；口語重複（例如 what what）照原文保留。
+2. 只拆真正影響理解的結構，children 全部加起來不超過 12 個；單字或很短的片語不要拆。
+3. 不要把引號內的子句誤認為外層主句；that 名詞子句作受詞或補語時，pattern 仍是 SVO 或 SVC。
 4. summaryZh 保留轉折、否定、因果、條件，不得添加新事實；simpleEnglish 用更簡單的字與更短的句子重述，不要改變原意。
 5. 只回 JSON，沒有 Markdown、開場語或註解。"""
 
-    private fun cacheKey(id: String, start: Long, english: String): String =
+    private fun cacheKey(version: String, id: String, start: Long, english: String): String =
         MessageDigest.getInstance("SHA-256")
-            .digest("$VERSION|$id|$start|$english".toByteArray(Charsets.UTF_8))
+            .digest("$version|$id|$start|$english".toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
 
+    /** Requests already on the way, so tapping again (or scrolling back) never pays for a second call. */
+    private val inFlight = ConcurrentHashMap<String, CompletableDeferred<SentenceDna>>()
+
     fun cached(context: Context, id: String, start: Long, english: String): SentenceDna? {
-        val raw = context.getSharedPreferences("sentence_dna_v2", Context.MODE_PRIVATE)
-            .getString(cacheKey(id, start, english), null) ?: return null
-        return runCatching { SentenceDna.parse(raw, english) }.getOrNull()
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(cacheKey(VERSION, id, start, english), null)
+            ?.let { raw -> runCatching { SentenceDna.parse(raw, english) }.getOrNull()?.let { return it } }
+        val legacy = context.getSharedPreferences(LEGACY_PREFS, Context.MODE_PRIVATE)
+            .getString(cacheKey(LEGACY_VERSION, id, start, english), null) ?: return null
+        return runCatching { SentenceDna.fromLegacy(legacy, english) }.getOrNull()
     }
 
-    suspend fun load(context: Context, id: String, start: Long, english: String, settings: Settings): SentenceDna =
+    suspend fun load(
+        context: Context, id: String, start: Long, english: String, settings: Settings, refresh: Boolean = false,
+    ): SentenceDna {
+        if (!refresh) cached(context, id, start, english)?.takeIf { !it.legacy }?.let { return it }
+        val key = cacheKey(VERSION, id, start, english)
+        val mine = CompletableDeferred<SentenceDna>()
+        val running = inFlight.putIfAbsent(key, mine)
+        if (running != null) return running.await()
+        return try {
+            fetch(context, key, english, settings).also { mine.complete(it) }
+        } catch (e: Exception) {
+            mine.completeExceptionally(e)
+            throw e
+        } finally {
+            inFlight.remove(key)
+        }
+    }
+
+    private suspend fun fetch(context: Context, key: String, english: String, settings: Settings): SentenceDna =
         withContext(Dispatchers.IO) {
-            cached(context, id, start, english)?.let { return@withContext it }
             val provider = settings.translatorProvider()
                 ?: error("請先在設定中填入 Gemini、DeepSeek 或 NVIDIA API 金鑰")
             fun request(prompt: String): String =
                 if (provider == Provider.GEMINI)
-                    Gemini.chatJson(settings.key(provider), settings.model(provider), SYSTEM, prompt, 90)
+                    Gemini.chatJson(settings.key(provider), settings.model(provider), SYSTEM, prompt, 120)
                 else OpenAiCompat.chat(provider, settings.key(provider), settings.model(provider), SYSTEM,
-                    prompt, maxTokens = 2400, timeoutSec = 90)
+                    prompt, maxTokens = 4000, timeoutSec = 120)
             val raw = request(english)
             val analysis = runCatching { SentenceDna.parse(raw, english) }.getOrElse { firstError ->
                 // One bounded retry; never cache an invalid model response.
                 val second = request("先前輸出無法通過格式或原文驗證（${firstError.message}）。請嚴格依 system 的 JSON 格式重新分析此原文：\n$english")
                 SentenceDna.parse(second, english)
             }
-            context.getSharedPreferences("sentence_dna_v2", Context.MODE_PRIVATE)
-                .edit().putString(cacheKey(id, start, english), analysis.toJson()).apply()
+            // commit() so the result is on disk before we report success; a killed app must not lose a paid answer.
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(key, analysis.toJson()).commit()
             analysis
         }
+}
+
+/** Colors for the layers: depth 0 is the core slot, deeper layers move through the palette. */
+@Composable
+private fun layerColor(depth: Int): Color = when (depth % 4) {
+    0 -> MaterialTheme.colorScheme.primary
+    1 -> MaterialTheme.colorScheme.tertiary
+    2 -> MaterialTheme.colorScheme.secondary
+    else -> MaterialTheme.colorScheme.error
+}
+
+private fun labelName(label: String) = when (label) {
+    "S" -> "S 主詞"
+    "V" -> "V 動詞"
+    "O" -> "O 受詞"
+    "IO" -> "IO 間接受詞"
+    "DO" -> "DO 直接受詞"
+    "C" -> "C 補語"
+    "OC" -> "OC 受詞補語"
+    else -> "A 修飾"
+}
+
+/** A row with a colored bar on the left; nested rows add one more bar, so the layers read like a tree. */
+@Composable
+private fun LayerRow(depth: Int, content: @Composable () -> Unit) {
+    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+        repeat(depth + 1) { level ->
+            Box(Modifier.padding(end = 6.dp).width(3.dp).fillMaxHeight().background(layerColor(level).copy(alpha = 0.6f)))
+        }
+        Column(Modifier.weight(1f).padding(vertical = 2.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) { content() }
+    }
+}
+
+@Composable
+private fun NodeView(node: DnaNode, depth: Int) {
+    LayerRow(depth) {
+        Text(
+            listOf(node.kind, node.function).filter { it.isNotBlank() }.joinToString(" · "),
+            style = MaterialTheme.typography.labelMedium, color = layerColor(depth),
+        )
+        Text(node.source)
+        Text(node.zh, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    node.children.forEach { NodeView(it, depth + 1) }
+}
+
+@Composable
+private fun StructureView(b: SentenceDna) {
+    Text("基本句型：${b.pattern}", style = MaterialTheme.typography.titleSmall)
+    Text(b.skeletonZh, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    b.core.forEach { part ->
+        LayerRow(0) {
+            Text(labelName(part.label), style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold, color = layerColor(0))
+            if (part.text.isNotBlank()) Text(part.text)
+            if (part.zh.isNotBlank()) {
+                Text(part.zh, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        part.children.forEach { NodeView(it, 1) }
+    }
 }
 
 @Composable
@@ -166,52 +333,54 @@ internal fun LongSentenceBreakdown(episodeId: String, startMs: Long, english: St
     }
     var busy by remember(episodeId, startMs, english) { mutableStateOf(false) }
     var error by remember(episodeId, startMs, english) { mutableStateOf<String?>(null) }
+    fun run(refresh: Boolean) {
+        busy = true
+        error = null
+        scope.launch {
+            try { result = SentenceDnaService.load(context, episodeId, startMs, english, settings, refresh) }
+            catch (e: Exception) { error = e.message ?: "拆解失敗，請稍後重試" }
+            finally { busy = false }
+        }
+    }
+    val saved = result != null
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         AssistChip(
             onClick = {
                 open = !open
-                if (open && result == null && !busy) {
-                    busy = true
-                    error = null
-                    scope.launch {
-                        try { result = SentenceDnaService.load(context, episodeId, startMs, english, settings) }
-                        catch (e: Exception) { error = e.message ?: "拆解失敗，請稍後重試" }
-                        finally { busy = false }
-                    }
-                }
+                // A saved analysis (even an older flat one) is shown as is; only an explicit tap re-asks the AI.
+                if (open && result == null && !busy) run(refresh = false)
             },
-            label = { Text(if (open) "收起 DNA 拆解" else "DNA 拆解") },
+            label = {
+                Text(when {
+                    open -> "收起 DNA 拆解"
+                    saved -> "DNA 拆解 ✓ 已存"
+                    else -> "DNA 拆解"
+                })
+            },
+            colors = if (saved) AssistChipDefaults.assistChipColors(
+                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                labelColor = MaterialTheme.colorScheme.onTertiaryContainer,
+            ) else AssistChipDefaults.assistChipColors(),
         )
         if (open) {
             when {
                 busy -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     CircularProgressIndicator(modifier = Modifier.padding(4.dp), strokeWidth = 2.dp)
-                    Text("正在辨識句型與語塊…")
+                    Text("正在一層一層拆解句子…")
                 }
                 result != null -> {
                     val b = result!!
                     Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = MaterialTheme.shapes.medium) {
                         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                listOf("主幹", "Chunks", "重點").forEachIndexed { index, label ->
+                                listOf("結構樹", "重點").forEachIndexed { index, label ->
                                     AssistChip(onClick = { tab = index }, label = {
                                         Text(if (tab == index) "● $label" else label)
                                     })
                                 }
                             }
                             when (tab) {
-                                0 -> {
-                                    Text("基本句型：${b.pattern}", style = MaterialTheme.typography.titleSmall)
-                                    Text("S：${b.subject}")
-                                    Text("V：${b.verb}")
-                                    if (b.remainder.isNotBlank()) Text("其餘：${b.remainder}")
-                                    Text(b.skeletonZh, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                                1 -> b.chunks.forEach { chunk ->
-                                    Text(chunk.role, style = MaterialTheme.typography.labelMedium)
-                                    Text(chunk.source)
-                                    Text(chunk.zh, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
+                                0 -> StructureView(b)
                                 else -> {
                                     Text("濃縮中文", style = MaterialTheme.typography.titleSmall)
                                     Text(b.summaryZh)
@@ -219,20 +388,18 @@ internal fun LongSentenceBreakdown(episodeId: String, startMs: Long, english: St
                                     Text(b.simpleEnglish)
                                 }
                             }
+                            if (b.legacy) {
+                                Text("這是舊版的平面拆解（已存，不另外花費）。", style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                TextButton(onClick = { run(refresh = true) }) { Text("改用分層拆解重新分析") }
+                            }
+                            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                         }
                     }
                 }
                 error != null -> {
                     Text(error.orEmpty(), color = MaterialTheme.colorScheme.error)
-                    OutlinedButton(onClick = {
-                        busy = true
-                        error = null
-                        scope.launch {
-                            try { result = SentenceDnaService.load(context, episodeId, startMs, english, settings) }
-                            catch (e: Exception) { error = e.message ?: "拆解失敗" }
-                            finally { busy = false }
-                        }
-                    }) { Text("重試") }
+                    OutlinedButton(onClick = { run(refresh = false) }) { Text("重試") }
                 }
             }
         }
