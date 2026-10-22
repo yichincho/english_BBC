@@ -35,6 +35,8 @@ BBC 英文聽力練習 App（Android）。聽不懂的地方，有逐句原稿�
 ./gradlew testDebugUnitTest assembleRelease
 ```
 
-APK 在 `app/build/outputs/apk/release/`。推到 `main` 之後，GitHub Actions 會自動建置並更新 Releases。
+APK 在 `app/build/outputs/apk/release/`。
+
+AI 型號清單來自共用的 [yichincho/ai-models](https://github.com/yichincho/ai-models)：App 啟動時讀線上的 `models.json`，離線時用 `app/src/main/assets/models.json`。`app/src/main/java/ai/models/` 是從那裡複製來的呼叫程式，要改請先改 ai-models 再複製過來。推到 `main` 之後，GitHub Actions 會自動建置並更新 Releases。
 
 `signing/app.keystore` 是故意放進 repo 的固定簽章檔（密碼就寫在 `app/build.gradle.kts`），這樣每次建置出來的 APK 都能直接蓋掉舊版、不用先移除。它不是機密；如果哪天要上架商店，請換成自己保管的金鑰。

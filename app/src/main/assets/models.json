@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-10-22",
+  "providers": {
+    "GEMINI": {
+      "label": "Gemini",
+      "format": "gemini",
+      "baseUrl": "https://generativelanguage.googleapis.com",
+      "keyEnv": "GEMINI_API_KEY",
+      "discover": [
+        "flash"
+      ],
+      "recommended": "gemini-3.7-flash",
+      "models": [
+        {
+          "id": "gemini-3.7-flash",
+          "note": "Google routes it to gemini-3.8-flash",
+          "status": "unknown"
+        },
+        {
+          "id": "gemini-3.6-flash",
+          "status": "unknown"
+        },
+        {
+          "id": "gemini-3.5-flash",
+          "note": "Google routes it to gemini-3.6-flash",
+          "status": "unknown"
+        },
+        {
+          "id": "gemini-3.8-flash",
+          "status": "unknown"
+        },
+        {
+          "id": "gemini-flash-latest",
+          "status": "unknown"
+        },
+        {
+          "id": "gemini-3.5-flash-lite",
+          "status": "unknown"
+        }
+      ]
+    },
+    "NVIDIA": {
+      "label": "NVIDIA",
+      "format": "openai",
+      "baseUrl": "https://integrate.api.nvidia.com/v1",
+      "keyEnv": "NVIDIA_API_KEY",
+      "discover": [
+        "deepseek-ai/deepseek-v",
+        "z-ai/glm-",
+        "nvidia/nemotron-3",
+        "moonshotai/kimi-",
+        "qwen/qwen3"
+      ],
+      "recommended": "deepseek-ai/deepseek-v4.1-flash",
+      "models": [
+        {
+          "id": "deepseek-ai/deepseek-v4.1-flash",
+          "status": "unknown"
+        },
+        {
+          "id": "z-ai/glm-5.3-flash",
+          "status": "unknown"
+        },
+        {
+          "id": "z-ai/glm-5.3",
+          "note": "NVIDIA says it is retired after 2026-10-28",
+          "status": "unknown"
+        },
+        {
+          "id": "z-ai/glm-5.2",
+          "note": "free endpoint marked deprecated",
+          "status": "unknown"
+        },
+        {
+          "id": "nvidia/nemotron-3-ultra-550b-a55b",
+          "status": "unknown"
+        },
+        {
+          "id": "nvidia/nemotron-3.5-lightning-30b-a3b",
+          "status": "unknown"
+        },
+        {
+          "id": "google/gemma-4-31b-it",
+          "status": "unknown"
+        },
+        {
+          "id": "openai/gpt-oss-20b",
+          "status": "unknown"
+        }
+      ]
+    },
+    "DEEPSEEK": {
+      "label": "DeepSeek",
+      "format": "openai",
+      "baseUrl": "https://api.deepseek.com",
+      "keyEnv": "DEEPSEEK_API_KEY",
+      "discover": [
+        "deepseek-"
+      ],
+      "recommended": "deepseek-flash",
+      "models": [
+        {
+          "id": "deepseek-flash",
+          "status": "unknown"
+        },
+        {
+          "id": "deepseek-v4-pro",
+          "status": "unknown"
+        }
+      ]
+    }
+  }
+}

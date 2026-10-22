@@ -45,6 +45,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,7 +62,6 @@ import androidx.compose.ui.unit.dp
 import com.yichincho.englishbbc.data.Ai
 import com.yichincho.englishbbc.data.DEFAULT_FEEDS
 import com.yichincho.englishbbc.data.MAX_VOLUME_BOOST_DB
-import com.yichincho.englishbbc.data.PRESET_MODELS
 import com.yichincho.englishbbc.data.Provider
 import com.yichincho.englishbbc.data.Repo
 import com.yichincho.englishbbc.data.Settings
@@ -195,7 +195,9 @@ private fun ProviderRow(p: Provider, settings: Settings) {
     // Model → null when it answered the probe, else why not. Missing means not tried yet.
     var probed by remember { mutableStateOf<Map<String, String?>>(emptyMap()) }
     var probing by remember { mutableStateOf(false) }
-    val presets = PRESET_MODELS[p].orEmpty()
+    val catalog by Repo.catalog.collectAsState()
+    val presets = remember(catalog) { Repo.presetModels(p) }
+    val checked = catalog?.get(p.name)?.models.orEmpty().associateBy { it.id }
     val choices = presets + (models - presets.toSet())
     // Typed text lives here and is written through, so the cursor never waits on the settings round trip.
     var key by remember { mutableStateOf(settings.key(p)) }
@@ -269,10 +271,11 @@ private fun ProviderRow(p: Provider, settings: Settings) {
                         choices.forEach { m ->
                             DropdownMenuItem(
                                 text = {
+                                    // Own test on this phone first, then the shared weekly check.
                                     val mark = when {
-                                        m !in probed -> ""
-                                        probed[m] == null -> "✓ "
-                                        else -> "✗ "
+                                        m in probed -> if (probed[m] == null) "✓ " else "✗ "
+                                        checked[m]?.status == "ok" -> "✓ "
+                                        else -> ""
                                     }
                                     Text(mark + m)
                                 },
