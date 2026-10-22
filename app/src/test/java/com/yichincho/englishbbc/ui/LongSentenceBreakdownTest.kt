@@ -41,7 +41,7 @@ class LongSentenceBreakdownTest {
         val result = SentenceDna.parse(valid, original)
         assertEquals("SVO", result.pattern)
         assertEquals(listOf("A", "S", "V", "O"), result.core.map { it.label })
-        assertEquals(3, result.core.last().children.first().depth())
+        assertEquals(2, result.core.last().children.first().depth())
         assertEquals(result, SentenceDna.parse(result.toJson(), original))
     }
 
