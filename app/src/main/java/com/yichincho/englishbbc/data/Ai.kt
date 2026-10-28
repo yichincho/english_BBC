@@ -16,6 +16,9 @@ import java.util.concurrent.TimeUnit
 
 class AiException(message: String, val httpCode: Int = 0) : Exception(message)
 
+/** [AiException.httpCode] for a reply that hit the token limit (not an HTTP status). */
+const val TRUNCATED = -1
+
 object Http {
     val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -163,7 +166,9 @@ object Gemini {
         return info.getString("uri")
     }
 
-    private fun generate(key: String, model: String, body: JSONObject, timeoutSec: Long = 0): String {
+    private fun generate(
+        key: String, model: String, body: JSONObject, timeoutSec: Long = 0, failOnTruncation: Boolean = false,
+    ): String {
         val req = Request.Builder().url("$BASE/v1beta/models/$model:generateContent")
             .header("x-goog-api-key", key)
             .post(body.toString().toRequestBody(Http.JSON))
@@ -171,6 +176,9 @@ object Gemini {
         val resp = JSONObject(Http.execute(req, WHO, timeoutSec))
         val candidate = resp.optJSONArray("candidates")?.optJSONObject(0)
             ?: throw AiException("Gemini 沒有回答（${resp.optJSONObject("promptFeedback")?.optString("blockReason").orEmpty()}）")
+        if (failOnTruncation && candidate.optString("finishReason") == "MAX_TOKENS") {
+            throw AiException("Gemini 的回覆太長，被截斷了", TRUNCATED)
+        }
         val parts = candidate.optJSONObject("content")?.optJSONArray("parts") ?: JSONArray()
         return parts.mapObjects { it }.filter { !it.optBoolean("thought") }.joinToString("") { it.optString("text") }
     }
@@ -216,13 +224,15 @@ object Gemini {
             .sortedBy { it.startMs }
     }
 
-    fun chatJson(key: String, model: String, system: String, user: String, timeoutSec: Long = 0): String {
+    fun chatJson(
+        key: String, model: String, system: String, user: String, timeoutSec: Long = 0, failOnTruncation: Boolean = false,
+    ): String {
         val body = JSONObject()
             .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", system))))
             .put("contents", JSONArray().put(JSONObject().put("role", "user")
                 .put("parts", JSONArray().put(JSONObject().put("text", user)))))
             .put("generationConfig", JSONObject().put("temperature", 0.2).put("responseMimeType", "application/json"))
-        return generate(key, model, body, timeoutSec)
+        return generate(key, model, body, timeoutSec, failOnTruncation)
     }
 }
 
@@ -242,7 +252,7 @@ object OpenAiCompat {
 
     fun chat(
         p: Provider, key: String, model: String, system: String, user: String,
-        maxTokens: Int = 4096, timeoutSec: Long = 0,
+        maxTokens: Int = 4096, timeoutSec: Long = 0, failOnTruncation: Boolean = false,
     ): String {
         val body = JSONObject()
             .put("model", model)
@@ -259,8 +269,14 @@ object OpenAiCompat {
             .post(body.toString().toRequestBody(Http.JSON))
             .build()
         val resp = JSONObject(Http.execute(req, p.label, timeoutSec))
-        return resp.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")?.optString("content")
-            ?: throw AiException("${p.label} 沒有回答")
+        val choice = resp.optJSONArray("choices")?.optJSONObject(0) ?: throw AiException("${p.label} 沒有回答")
+        // Reasoning models spend max_tokens on thinking first; a cut-off reply is never valid JSON, so say so.
+        if (failOnTruncation && choice.optString("finish_reason") == "length") {
+            throw AiException("${p.label} 的回覆太長，在 $maxTokens tokens 被截斷了", TRUNCATED)
+        }
+        val message = choice.optJSONObject("message") ?: throw AiException("${p.label} 沒有回答")
+        // A JSON null reads back as the text "null" with optString.
+        return if (message.isNull("content")) "" else message.optString("content")
     }
 }
 

@@ -1,7 +1,8 @@
 package com.yichincho.englishbbc.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -59,6 +60,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -210,7 +213,7 @@ private fun TopBar(title: String, speed: Float, autoSpeed: Float, player: Player
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 private fun TranscriptList(episodeId: String, sentences: List<Sentence>, current: Int, settings: Settings, onTap: (Int) -> Unit) {
     val listState = rememberLazyListState()
@@ -218,6 +221,8 @@ private fun TranscriptList(episodeId: String, sentences: List<Sentence>, current
         if (current >= 0 && !listState.isScrollInProgress) listState.animateScrollToItem((current - 1).coerceAtLeast(0))
     }
     val size = settings.fontSizeSp
+    val copy = rememberCopier()
+    val haptic = LocalHapticFeedback.current
     LazyColumn(state = listState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
         itemsIndexed(sentences) { index, s ->
             val isCurrent = index == current
@@ -226,7 +231,14 @@ private fun TranscriptList(episodeId: String, sentences: List<Sentence>, current
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
                     .background(if (isCurrent) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.background)
-                    .clickable { onTap(index) }
+                    // Tap plays from this sentence; long-press copies it (with the Chinese when shown).
+                    .combinedClickable(
+                        onClick = { onTap(index) },
+                        onLongClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            copy(if (settings.showZh && s.zh.isNotBlank()) "${s.en}\n${s.zh}" else s.en)
+                        },
+                    )
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
