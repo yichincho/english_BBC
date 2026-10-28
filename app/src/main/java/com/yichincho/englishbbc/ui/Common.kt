@@ -1,5 +1,6 @@
 package com.yichincho.englishbbc.ui
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -23,6 +24,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.yichincho.englishbbc.data.LibraryItem
@@ -125,4 +129,17 @@ fun ConfirmDialog(title: String, text: String, confirm: String, onConfirm: () ->
         confirmButton = { TextButton(onClick = { onConfirm(); onDismiss() }) { Text(confirm) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
+}
+
+/** Returns a function that puts text on the clipboard and says so. */
+@Composable
+fun rememberCopier(): (String) -> Unit {
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    return remember(clipboard, context) {
+        { text ->
+            clipboard.setText(AnnotatedString(text))
+            Toast.makeText(context, "已複製", Toast.LENGTH_SHORT).show()
+        }
+    }
 }

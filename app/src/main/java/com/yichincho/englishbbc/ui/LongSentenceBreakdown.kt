@@ -31,10 +31,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.yichincho.englishbbc.data.AiException
 import com.yichincho.englishbbc.data.Gemini
 import com.yichincho.englishbbc.data.OpenAiCompat
 import com.yichincho.englishbbc.data.Provider
 import com.yichincho.englishbbc.data.Settings
+import com.yichincho.englishbbc.data.TRUNCATED
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -52,6 +54,61 @@ internal object LongSentenceDetector {
         val markers = Regex("\\b(although|though|whereas|unless|because|which|whose|whom|who|that|whether|while)\\b", RegexOption.IGNORE_CASE)
             .findAll(text).count()
         return words >= 25 || markers >= 2
+    }
+}
+
+/**
+ * Finds the JSON object in a model reply. Models wrap it in thinking, Markdown fences or chatter, and sometimes
+ * leave a trailing comma; a reply cut off mid-object cannot be saved and is reported as such.
+ */
+internal object JsonRescue {
+    fun extract(raw: String): JSONObject {
+        var text = raw.replace(Regex("(?s)<think>.*?</think>"), "")
+        // An unclosed <think> means the thinking ran on; any answer would come after the last closing brace anyway.
+        text = text.replace("<think>", "").replace(Regex("```(?:json)?"), "").trim()
+        val candidates = balancedObjects(text)
+        if (candidates.isEmpty()) {
+            require(text.indexOf('{') < 0) { "AI 的回覆在 JSON 中途斷掉了（多半是輸出太長）" }
+            throw IllegalArgumentException("AI 沒有回 JSON：${preview(text)}")
+        }
+        // The answer is normally the last object; earlier ones tend to be examples inside the thinking.
+        for (c in candidates.asReversed()) {
+            parse(c)?.let { return it }
+            parse(c.replace(Regex(",\\s*([}\\]])"), "$1"))?.let { return it }
+        }
+        throw IllegalArgumentException("AI 回傳的 JSON 格式不正確：${preview(candidates.last())}")
+    }
+
+    private fun parse(text: String): JSONObject? = runCatching { JSONObject(text) }.getOrNull()
+
+    private fun preview(text: String): String {
+        val flat = text.replace(Regex("\\s+"), " ").trim()
+        return if (flat.length <= 80) flat else flat.take(50) + " … " + flat.takeLast(25)
+    }
+
+    /** Top-level `{…}` spans, skipping braces inside strings. */
+    private fun balancedObjects(text: String): List<String> {
+        val found = mutableListOf<String>()
+        var depth = 0
+        var start = -1
+        var inString = false
+        var escaped = false
+        for ((i, ch) in text.withIndex()) {
+            if (inString) {
+                when {
+                    escaped -> escaped = false
+                    ch == '\\' -> escaped = true
+                    ch == '"' -> inString = false
+                }
+                continue
+            }
+            when (ch) {
+                '"' -> if (depth > 0) inString = true
+                '{' -> { if (depth == 0) start = i; depth++ }
+                '}' -> if (depth > 0) { depth--; if (depth == 0) found += text.substring(start, i + 1) }
+            }
+        }
+        return found
     }
 }
 
@@ -87,6 +144,25 @@ internal data class SentenceDna(
     /** True when this came from the older flat V2 analysis and has no nested layers. */
     val legacy: Boolean = false,
 ) {
+    /** The whole analysis as indented text, for pasting into notes. */
+    fun toPlainText(english: String): String = buildString {
+        appendLine(english)
+        appendLine()
+        appendLine("基本句型：$pattern　$skeletonZh")
+        fun node(n: DnaNode, depth: Int) {
+            val head = listOf(n.kind, n.function).filter { it.isNotBlank() }.joinToString(" · ")
+            appendLine("${"  ".repeat(depth)}└ [$head] ${n.source}　${n.zh}")
+            n.children.forEach { node(it, depth + 1) }
+        }
+        core.forEach { part ->
+            appendLine("${part.label}：${part.text}${if (part.zh.isNotBlank()) "　${part.zh}" else ""}")
+            part.children.forEach { node(it, 1) }
+        }
+        appendLine()
+        appendLine("濃縮中文：$summaryZh")
+        append("簡化英文：$simpleEnglish")
+    }
+
     fun toJson(): String = JSONObject()
         .put("pattern", pattern)
         .put("core", JSONArray().also { arr -> core.forEach { arr.put(it.toJson()) } })
@@ -99,15 +175,7 @@ internal data class SentenceDna(
         const val MAX_DEPTH = 4
         const val MAX_NODES = 14
 
-        private fun objectOf(raw: String): JSONObject {
-            // Ignore completed reasoning wrappers and Markdown fences.
-            val clean = raw.replace(Regex("(?s)<think>.*?</think>"), "").trim()
-            val start = clean.indexOf('{')
-            val end = clean.lastIndexOf('}')
-            require(start >= 0 && end > start) { "AI 未產生可辨識的 JSON，請重試或切換模型" }
-            return runCatching { JSONObject(clean.substring(start, end + 1)) }
-                .getOrElse { throw IllegalArgumentException("AI 回傳的 JSON 格式不正確") }
-        }
+        private fun objectOf(raw: String): JSONObject = JsonRescue.extract(raw)
 
         private fun JSONObject.field(name: String): String = optString(name).trim().also {
             require(it.isNotEmpty()) { "AI 缺少必要欄位：$name" }
@@ -186,6 +254,8 @@ internal object SentenceDnaService {
     private const val LEGACY_VERSION = "dna-v2"
     private const val PREFS = "sentence_dna_v3"
     private const val LEGACY_PREFS = "sentence_dna_v2"
+    /** Room for a reasoning model's thinking plus a four-level tree. */
+    private const val MAX_TOKENS = 8192
     private const val SYSTEM = """你是協助台灣學生閱讀 BBC 的英文文法老師。請把「一個英文長句」拆成一層一層的結構樹。
 第一層 core：主句的五大基本句型 SV/SVC/SVO/SVOO/SVOC，依原文順序列出每個槽位：
   label 只能是 S、V、O、IO、DO、C、OC，或 A（句首／句尾的副詞子句、呼語、插入語等句子層級修飾）。
@@ -198,7 +268,7 @@ internal object SentenceDnaService {
 僅回傳一個 JSON 物件，格式：
 {"pattern":"SVC","core":[{"label":"S","text":"原文片段","zh":"中文","children":[{"source":"原文片段","kind":"名詞子句（what）","function":"作主詞","zh":"中文","children":[]}]},{"label":"V","text":"is","zh":"是","children":[]}],"skeletonZh":"一句繁體中文主幹意思","summaryZh":"一句繁中摘要","simpleEnglish":"一至兩句簡明自然英文重述"}
 重要限制：
-1. text / source 必須是原文中逐字存在且連續的片段，不可改字、拼接或補字；口語重複（例如 what what）照原文保留。
+1. text / source 必須是原文中逐字存在且連續的片段，不可改字、拼接或補字；口語重複（例如 what what）照原文保留。原文裡的雙引號在 JSON 字串中要寫成 \"。
 2. 只拆真正影響理解的結構，children 全部加起來不超過 12 個；單字或很短的片語不要拆。
 3. 不要把引號內的子句誤認為外層主句；that 名詞子句作受詞或補語時，pattern 仍是 SVO 或 SVC。
 4. summaryZh 保留轉折、否定、因果、條件，不得添加新事實；simpleEnglish 用更簡單的字與更短的句子重述，不要改變原意。
@@ -243,16 +313,26 @@ internal object SentenceDnaService {
         withContext(Dispatchers.IO) {
             val provider = settings.translatorProvider()
                 ?: error("請先在設定中填入 Gemini、DeepSeek 或 NVIDIA API 金鑰")
+            val model = settings.model(provider)
             fun request(prompt: String): String =
                 if (provider == Provider.GEMINI)
-                    Gemini.chatJson(settings.key(provider), settings.model(provider), SYSTEM, prompt, 120)
-                else OpenAiCompat.chat(provider, settings.key(provider), settings.model(provider), SYSTEM,
-                    prompt, maxTokens = 4000, timeoutSec = 120)
-            val raw = request(english)
-            val analysis = runCatching { SentenceDna.parse(raw, english) }.getOrElse { firstError ->
-                // One bounded retry; never cache an invalid model response.
-                val second = request("先前輸出無法通過格式或原文驗證（${firstError.message}）。請嚴格依 system 的 JSON 格式重新分析此原文：\n$english")
-                SentenceDna.parse(second, english)
+                    Gemini.chatJson(settings.key(provider), model, SYSTEM, prompt, 150, failOnTruncation = true)
+                else OpenAiCompat.chat(provider, settings.key(provider), model, SYSTEM,
+                    prompt, maxTokens = MAX_TOKENS, timeoutSec = 150, failOnTruncation = true)
+            fun attempt(prompt: String): SentenceDna = SentenceDna.parse(request(prompt), english)
+            val analysis = try {
+                attempt(english)
+            } catch (first: Exception) {
+                if (first is AiException && first.httpCode != TRUNCATED) throw first
+                // One bounded retry; never cache an invalid model response. A cut-off reply gets a smaller job.
+                val fix = if (first is AiException) "上次輸出太長被截斷。這次請精簡：children 總數不超過 6 個，zh 每項不超過 15 字。"
+                else "先前輸出無法通過格式或原文驗證（${first.message}）。"
+                try {
+                    attempt("$fix 請嚴格依 system 的 JSON 格式重新分析此原文，只回 JSON：\n$english")
+                } catch (second: Exception) {
+                    // Name the model, so a model that keeps failing is easy to spot and swap in Settings.
+                    throw IllegalArgumentException("${second.message}（${provider.label} · $model）")
+                }
             }
             // commit() so the result is on disk before we report success; a killed app must not lose a paid answer.
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(key, analysis.toJson()).commit()
@@ -326,6 +406,7 @@ internal fun LongSentenceBreakdown(episodeId: String, startMs: Long, english: St
     if (!LongSentenceDetector.qualifies(english)) return
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val copy = rememberCopier()
     var open by remember(episodeId, startMs, english) { mutableStateOf(false) }
     var tab by remember(episodeId, startMs, english) { mutableStateOf(0) }
     var result by remember(episodeId, startMs, english) {
@@ -394,6 +475,7 @@ internal fun LongSentenceBreakdown(episodeId: String, startMs: Long, english: St
                                 TextButton(onClick = { run(refresh = true) }) { Text("改用分層拆解重新分析") }
                             }
                             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                            TextButton(onClick = { copy(b.toPlainText(english)) }) { Text("複製拆解") }
                         }
                     }
                 }

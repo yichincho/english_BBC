@@ -77,4 +77,25 @@ class LongSentenceBreakdownTest {
         assertEquals(listOf("S", "V", "O", "A"), result.core.map { it.label })
         assertEquals("讓步子句", result.core.last().children.single().kind)
     }
+
+    @Test fun rescueFindsJsonInsideThinkingFencesAndChatter() {
+        val wrapped = "<think>maybe {\"draft\":1}</think>Sure! ```json\n$valid\n``` Hope this helps."
+        assertEquals("SVO", SentenceDna.parse(wrapped, original).pattern)
+    }
+
+    @Test fun rescueIgnoresBracesInsideStringsAndTrailingCommas() {
+        val o = JsonRescue.extract("""note {"a":"x } y","b":[1,2,],}""")
+        assertEquals("x } y", o.getString("a"))
+    }
+
+    @Test fun cutOffReplyIsReportedAsTruncated() {
+        val e = runCatching { JsonRescue.extract(valid.dropLast(40)) }.exceptionOrNull()!!
+        assertTrue(e.message!!, "斷掉" in e.message!!)
+    }
+
+    @Test fun plainTextShowsEveryLayer() {
+        val text = SentenceDna.parse(valid, original).toPlainText(original)
+        assertTrue("O：that factors were overlooked" in text)
+        assertTrue("    └ [被動語態 · 說明 factors] were overlooked" in text)
+    }
 }
