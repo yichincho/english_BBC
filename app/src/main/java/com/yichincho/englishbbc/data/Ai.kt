@@ -321,9 +321,19 @@ object Ai {
         return pick ?: current
     }
 
+    /** Shared by translation and the catch-up pass, so both mark the same kind of words. */
+    private const val VERB_RULE = "主要子句和所有子句裡的動詞都要，包含 be 動詞、助動詞與否定（例如 is、should be revived、don't see、align），" +
+        "依原文順序，每個都必須和原文拼法完全相同；不含 to、名詞或形容詞。"
+
+    private const val VERBS_SYSTEM = """我會給你一個 JSON，裡面是 BBC 節目的英文句子。請列出每一句的動詞。
+規則：$VERB_RULE
+只輸出 JSON，格式：{"items":[{"i":0,"v":["動詞"]}]}
+i 要跟輸入的一樣，每一句都要有，不可以漏；沒有動詞就給空陣列。"""
+
     private const val TRANSLATE_SYSTEM = """你是幫台灣學生練英文聽力的老師。我會給你一個 JSON，裡面是 BBC 節目的英文句子。
 請把每一句翻成自然的繁體中文（台灣用語），並挑出 0 到 3 個對中級學習者比較難的單字或片語，附上簡短的繁體中文意思。
-只輸出 JSON，格式：{"items":[{"i":0,"zh":"中文翻譯","words":[{"en":"單字","zh":"意思"}]}]}
+v 列出這句英文裡的動詞：$VERB_RULE
+只輸出 JSON，格式：{"items":[{"i":0,"zh":"中文翻譯","words":[{"en":"單字","zh":"意思"}],"v":["動詞"]}]}
 i 要跟輸入的一樣，每一句都要有，不可以漏。"""
 
     /** One translation call may take this long before it counts as stuck. */
@@ -348,7 +358,28 @@ i 要跟輸入的一樣，每一句都要有，不可以漏。"""
             val original = byIndex[o.optInt("i", -1)] ?: return@mapNotNull null
             val words = (o.optJSONArray("words") ?: JSONArray()).mapObjects { Word(it.optString("en"), it.optString("zh")) }
                 .filter { it.en.isNotBlank() }
-            o.optInt("i") to original.copy(zh = o.optString("zh"), words = words)
+            o.optInt("i") to original.copy(zh = o.optString("zh"), words = words, verbs = verbsOf(o, original.en))
+        }.toMap()
+    }
+
+    /** Keeps only verbs that really are in the sentence; null when the reply had no "v" at all. */
+    private fun verbsOf(o: JSONObject, english: String): List<String>? {
+        val arr = o.optJSONArray("v") ?: return null
+        return (0 until arr.length()).map { arr.optString(it).trim() }
+            .filter { it.isNotEmpty() && english.contains(it, ignoreCase = true) }
+    }
+
+    /** Finds the verbs of sentences translated before verbs were tagged. Returns index → verbs. */
+    fun tagVerbs(s: Settings, p: Provider, batch: List<IndexedValue<Sentence>>): Map<Int, List<String>> {
+        val user = JSONObject().put("sentences", batch.toJsonArray { JSONObject().put("i", it.index).put("en", it.value.en) }).toString()
+        val raw = if (p == Provider.GEMINI) Gemini.chatJson(s.key(p), s.model(p), VERBS_SYSTEM, user, TRANSLATE_TIMEOUT_SEC)
+        else OpenAiCompat.chat(p, s.key(p), s.model(p), VERBS_SYSTEM, user, timeoutSec = TRANSLATE_TIMEOUT_SEC)
+        val reply = raw.replace(Regex("(?s)<think>.*?</think>"), "").trim()
+        val items = extractJsonObject(reply).optJSONArray("items") ?: JSONArray()
+        val byIndex = batch.associate { it.index to it.value }
+        return items.mapObjects { it }.mapNotNull { o ->
+            val original = byIndex[o.optInt("i", -1)] ?: return@mapNotNull null
+            verbsOf(o, original.en)?.let { o.optInt("i") to it }
         }.toMap()
     }
 }

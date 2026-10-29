@@ -19,4 +19,11 @@ jobs:
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
       - name: Unit tests and debug build
-        run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon testDebugUnitTest assembleDebug 2>&1 | tee build.log
+      # Compiler errors and failed tests as annotations, readable without downloading the log.
+      - name: Report failures
+        if: failure()
+        run: |
+          grep -E "^e: |FAILED|AssertionError|Exception:|expected:" build.log | head -30 | sed 's/^/::error::/' || true

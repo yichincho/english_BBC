@@ -43,7 +43,25 @@ data class Sentence(
     val en: String,
     val zh: String = "",
     val words: List<Word> = emptyList(),
+    /** Verbs exactly as written in [en]; null until the AI has tagged this sentence. */
+    val verbs: List<String>? = null,
 )
+
+/**
+ * Character ranges of [verbs] in [english], matched as whole words and in order, so "is" never lights up
+ * inside "this" and a verb used twice is marked where the AI meant it.
+ */
+fun verbRanges(english: String, verbs: List<String>): List<IntRange> {
+    val found = mutableListOf<IntRange>()
+    var offset = 0
+    for (v in verbs.map { it.trim() }.filter { it.isNotEmpty() }) {
+        val pattern = Regex("(?<![A-Za-z'’])" + Regex.escape(v) + "(?![A-Za-z'’])", RegexOption.IGNORE_CASE)
+        val hit = pattern.find(english, offset) ?: pattern.find(english) ?: continue
+        found += hit.range
+        if (hit.range.first >= offset) offset = hit.range.last + 1
+    }
+    return found
+}
 
 data class SavedSentence(
     val episodeId: String,
@@ -90,6 +108,7 @@ fun libraryItemFromJson(o: JSONObject) = LibraryItem(
 fun Sentence.toJson(): JSONObject = JSONObject()
     .put("startMs", startMs).put("en", en).put("zh", zh)
     .put("words", JSONArray().also { arr -> words.forEach { arr.put(JSONObject().put("en", it.en).put("zh", it.zh)) } })
+    .also { o -> verbs?.let { v -> o.put("v", JSONArray(v)) } }
 
 fun sentenceFromJson(o: JSONObject): Sentence {
     val arr = o.optJSONArray("words") ?: JSONArray()
@@ -98,6 +117,7 @@ fun sentenceFromJson(o: JSONObject): Sentence {
         en = o.optString("en"),
         zh = o.optString("zh"),
         words = (0 until arr.length()).map { arr.getJSONObject(it) }.map { Word(it.optString("en"), it.optString("zh")) },
+        verbs = o.optJSONArray("v")?.let { v -> (0 until v.length()).map { v.optString(it) } },
     )
 }
 

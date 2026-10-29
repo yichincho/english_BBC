@@ -104,6 +104,11 @@ fun PlayerScreen(
         if (item.hasTranscript && !item.translationComplete && item.error.isEmpty()) Repo.prepare(id)
     }
 
+    // Older translations have no verbs yet; tag them once in the background so every sentence shows its verbs.
+    LaunchedEffect(id, sentences.isNotEmpty(), item.translationComplete) {
+        if (sentences.isNotEmpty() && item.translationComplete) Repo.tagVerbsIfNeeded(id)
+    }
+
     val loaded = player.mediaId == id
     val position = if (loaded) player.positionMs else item.lastPositionMs
     val duration = if (loaded && player.durationMs > 0) player.durationMs else item.episode.durationSec * 1000L
@@ -243,7 +248,7 @@ private fun TranscriptList(episodeId: String, sentences: List<Sentence>, current
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 SentenceText(
-                    episodeId, s.startMs, s.en,
+                    episodeId, s.startMs, s.en, s.verbs,
                     fontSize = size.sp, lineHeight = (size * 1.45f).sp,
                     fontWeight = if (isCurrent) FontWeight.Medium else FontWeight.Normal,
                     color = when {

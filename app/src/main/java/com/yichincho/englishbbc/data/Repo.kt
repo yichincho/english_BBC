@@ -252,6 +252,51 @@ object Repo {
         job.start()
     }
 
+    /** Episodes whose verb tagging already ran (or gave up) since the app started, so it is tried once per launch. */
+    private val verbsTried = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * Tags the verbs of sentences translated before verbs existed. Runs once per episode in the background,
+     * saves as it goes, so it never has to be paid for twice; a few failures in a row end it quietly.
+     */
+    fun tagVerbsIfNeeded(id: String) {
+        if (working.value.containsKey(id) || settings.value.translatorProvider() == null) return
+        val start = transcripts.value[id] ?: return
+        if (start.none { it.verbs == null && it.zh.isNotBlank() } || !verbsTried.add(id)) return
+        setStage(id, "標記動詞")
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                var failed = 0
+                val todo = start.withIndex().filter { it.value.verbs == null && it.value.zh.isNotBlank() }
+                for ((n, batch) in todo.chunked(20).withIndex()) {
+                    val s = settings.value
+                    val provider = s.translatorProvider() ?: return@launch
+                    setStage(id, "標記動詞 ${n * 20}/${todo.size} 句")
+                    val tagged = try {
+                        retrying { Ai.tagVerbs(s, provider, batch) }
+                    } catch (e: AiException) {
+                        emptyMap()
+                    }
+                    currentCoroutineContext().ensureActive()
+                    if (tagged.isEmpty()) {
+                        if (++failed >= MAX_FAILED_BATCHES) return@launch
+                        continue
+                    }
+                    failed = 0
+                    // Re-read so a translation saved meanwhile is not overwritten.
+                    val latest = transcripts.value[id] ?: return@launch
+                    saveTranscript(id, latest.mapIndexed { i, sentence ->
+                        tagged[i]?.takeIf { sentence.en == start.getOrNull(i)?.en }?.let { sentence.copy(verbs = it) } ?: sentence
+                    })
+                }
+            } finally {
+                if (jobs.remove(id, coroutineContext.job)) working.update { it - id }
+            }
+        }
+        jobs[id] = job
+        job.start()
+    }
+
     /** Stops translating [id]. A call already sent to the AI ends on its own; its answer is thrown away. */
     fun stop(id: String) {
         jobs.remove(id)?.cancel() ?: return
