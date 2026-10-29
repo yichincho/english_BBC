@@ -98,4 +98,16 @@ class LongSentenceBreakdownTest {
         assertTrue("O：that factors were overlooked" in text)
         assertTrue("    └ [被動語態 · 說明 factors] were overlooked" in text)
     }
+
+    @Test fun verbRangePointsAtTheMainVerb() {
+        val ranges = SentenceDna.parse(valid, original).verbRanges(original)
+        assertEquals(listOf("suggested"), ranges.map { original.substring(it.first, it.last + 1) })
+    }
+
+    @Test fun shortVerbIsNotFoundInsideAnotherWord() {
+        val sentence = "What this means is clear."
+        val dna = """{"pattern":"SVC","core":[{"label":"S","text":"What this means","zh":"","children":[]},{"label":"V","text":"is","zh":"","children":[]},{"label":"C","text":"clear","zh":"","children":[]}],"skeletonZh":"x","summaryZh":"x","simpleEnglish":"x"}"""
+        val range = SentenceDna.parse(dna, sentence).verbRanges(sentence).single()
+        assertEquals(16, range.first)
+    }
 }

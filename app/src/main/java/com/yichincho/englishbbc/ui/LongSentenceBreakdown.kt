@@ -22,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -29,7 +30,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import com.yichincho.englishbbc.data.AiException
 import com.yichincho.englishbbc.data.Gemini
@@ -37,14 +41,14 @@ import com.yichincho.englishbbc.data.OpenAiCompat
 import com.yichincho.englishbbc.data.Provider
 import com.yichincho.englishbbc.data.Settings
 import com.yichincho.englishbbc.data.TRUNCATED
+import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.security.MessageDigest
-import java.util.concurrent.ConcurrentHashMap
 
 internal object LongSentenceDetector {
     fun wordCount(text: String): Int = Regex("[A-Za-z]+(?:['’][A-Za-z]+)?").findAll(text).count()
@@ -144,6 +148,24 @@ internal data class SentenceDna(
     /** True when this came from the older flat V2 analysis and has no nested layers. */
     val legacy: Boolean = false,
 ) {
+    /** Where each V slot sits in [english], walking the core in order so "is" never matches inside "this". */
+    fun verbRanges(english: String): List<IntRange> {
+        val found = mutableListOf<IntRange>()
+        var offset = 0
+        for (part in core) {
+            if (part.text.isBlank()) continue
+            val at = english.indexOf(part.text, offset).takeIf { it >= 0 } ?: wordIndex(english, part.text)
+            if (at < 0) continue
+            if (part.label == "V") found += at until at + part.text.length
+            // A slots of the older flat analysis may sit anywhere, so they do not move the cursor.
+            if (part.label != "A") offset = at + part.text.length
+        }
+        return found
+    }
+
+    private fun wordIndex(english: String, text: String): Int =
+        Regex("(?<![A-Za-z'’])" + Regex.escape(text) + "(?![A-Za-z'’])").find(english)?.range?.first ?: -1
+
     /** The whole analysis as indented text, for pasting into notes. */
     fun toPlainText(english: String): String = buildString {
         appendLine(english)
@@ -279,6 +301,11 @@ internal object SentenceDnaService {
             .digest("$version|$id|$start|$english".toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
 
+    /** Analyses fetched while the app is open, so the transcript can mark their verbs right away. */
+    val fresh = mutableStateMapOf<String, SentenceDna>()
+
+    fun key(id: String, start: Long, english: String) = cacheKey(VERSION, id, start, english)
+
     /** Requests already on the way, so tapping again (or scrolling back) never pays for a second call. */
     private val inFlight = ConcurrentHashMap<String, CompletableDeferred<SentenceDna>>()
 
@@ -300,7 +327,10 @@ internal object SentenceDnaService {
         val running = inFlight.putIfAbsent(key, mine)
         if (running != null) return running.await()
         return try {
-            fetch(context, key, english, settings).also { mine.complete(it) }
+            fetch(context, key, english, settings).also {
+                fresh[key] = it
+                mine.complete(it)
+            }
         } catch (e: Exception) {
             mine.completeExceptionally(e)
             throw e
@@ -392,7 +422,10 @@ private fun StructureView(b: SentenceDna) {
         LayerRow(0) {
             Text(labelName(part.label), style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.Bold, color = layerColor(0))
-            if (part.text.isNotBlank()) Text(part.text)
+            if (part.text.isNotBlank()) {
+                if (part.label == "V") Text(part.text, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                else Text(part.text)
+            }
             if (part.zh.isNotBlank()) {
                 Text(part.zh, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -486,4 +519,26 @@ internal fun LongSentenceBreakdown(episodeId: String, startMs: Long, english: St
             }
         }
     }
+}
+
+/** The transcript sentence; once it has a DNA analysis, its main verb(s) show in bold red. */
+@Composable
+internal fun SentenceText(
+    episodeId: String, startMs: Long, english: String,
+    fontSize: TextUnit, lineHeight: TextUnit, fontWeight: FontWeight, color: Color,
+) {
+    val context = LocalContext.current
+    val long = remember(english) { LongSentenceDetector.qualifies(english) }
+    val key = remember(episodeId, startMs, english) { SentenceDnaService.key(episodeId, startMs, english) }
+    val saved = remember(key) { if (long) SentenceDnaService.cached(context, episodeId, startMs, english) else null }
+    val dna = SentenceDnaService.fresh[key] ?: saved
+    val red = MaterialTheme.colorScheme.error
+    val text = remember(dna, english, red) {
+        val verbs = dna?.verbRanges(english).orEmpty()
+        buildAnnotatedString {
+            append(english)
+            verbs.forEach { addStyle(SpanStyle(color = red, fontWeight = FontWeight.Bold), it.first, it.last + 1) }
+        }
+    }
+    Text(text, fontSize = fontSize, lineHeight = lineHeight, fontWeight = fontWeight, color = color)
 }
