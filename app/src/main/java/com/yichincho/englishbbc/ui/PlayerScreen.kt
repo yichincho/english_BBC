@@ -242,8 +242,8 @@ private fun TranscriptList(episodeId: String, sentences: List<Sentence>, current
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text(
-                    s.en,
+                SentenceText(
+                    episodeId, s.startMs, s.en,
                     fontSize = size.sp, lineHeight = (size * 1.45f).sp,
                     fontWeight = if (isCurrent) FontWeight.Medium else FontWeight.Normal,
                     color = when {
