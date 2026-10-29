@@ -321,12 +321,6 @@ object Ai {
         return pick ?: current
     }
 
-    private const val TRANSLATE_SYSTEM = """你是幫台灣學生練英文聽力的老師。我會給你一個 JSON，裡面是 BBC 節目的英文句子。
-請把每一句翻成自然的繁體中文（台灣用語），並挑出 0 到 3 個對中級學習者比較難的單字或片語，附上簡短的繁體中文意思。
-v 列出這句英文裡的動詞：$VERB_RULE
-只輸出 JSON，格式：{"items":[{"i":0,"zh":"中文翻譯","words":[{"en":"單字","zh":"意思"}],"v":["動詞"]}]}
-i 要跟輸入的一樣，每一句都要有，不可以漏。"""
-
     /** Shared by translation and the catch-up pass, so both mark the same kind of words. */
     private const val VERB_RULE = "主要子句和所有子句裡的動詞都要，包含 be 動詞、助動詞與否定（例如 is、should be revived、don't see、align），" +
         "依原文順序，每個都必須和原文拼法完全相同；不含 to、名詞或形容詞。"
@@ -335,6 +329,12 @@ i 要跟輸入的一樣，每一句都要有，不可以漏。"""
 規則：$VERB_RULE
 只輸出 JSON，格式：{"items":[{"i":0,"v":["動詞"]}]}
 i 要跟輸入的一樣，每一句都要有，不可以漏；沒有動詞就給空陣列。"""
+
+    private const val TRANSLATE_SYSTEM = """你是幫台灣學生練英文聽力的老師。我會給你一個 JSON，裡面是 BBC 節目的英文句子。
+請把每一句翻成自然的繁體中文（台灣用語），並挑出 0 到 3 個對中級學習者比較難的單字或片語，附上簡短的繁體中文意思。
+v 列出這句英文裡的動詞：$VERB_RULE
+只輸出 JSON，格式：{"items":[{"i":0,"zh":"中文翻譯","words":[{"en":"單字","zh":"意思"}],"v":["動詞"]}]}
+i 要跟輸入的一樣，每一句都要有，不可以漏。"""
 
     /** One translation call may take this long before it counts as stuck. */
     const val TRANSLATE_TIMEOUT_SEC = 90L
