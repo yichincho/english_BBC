@@ -41,6 +41,7 @@ import com.yichincho.englishbbc.data.OpenAiCompat
 import com.yichincho.englishbbc.data.Provider
 import com.yichincho.englishbbc.data.Settings
 import com.yichincho.englishbbc.data.TRUNCATED
+import com.yichincho.englishbbc.data.verbRanges
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CompletableDeferred
@@ -521,10 +522,10 @@ internal fun LongSentenceBreakdown(episodeId: String, startMs: Long, english: St
     }
 }
 
-/** The transcript sentence; once it has a DNA analysis, its main verb(s) show in bold red. */
+/** The transcript sentence with its verbs in bold red: the ones tagged with the translation, plus the DNA's V. */
 @Composable
 internal fun SentenceText(
-    episodeId: String, startMs: Long, english: String,
+    episodeId: String, startMs: Long, english: String, verbs: List<String>?,
     fontSize: TextUnit, lineHeight: TextUnit, fontWeight: FontWeight, color: Color,
 ) {
     val context = LocalContext.current
@@ -533,11 +534,11 @@ internal fun SentenceText(
     val saved = remember(key) { if (long) SentenceDnaService.cached(context, episodeId, startMs, english) else null }
     val dna = SentenceDnaService.fresh[key] ?: saved
     val red = MaterialTheme.colorScheme.error
-    val text = remember(dna, english, red) {
-        val verbs = dna?.verbRanges(english).orEmpty()
+    val text = remember(dna, verbs, english, red) {
+        val ranges = verbRanges(english, verbs.orEmpty()) + dna?.verbRanges(english).orEmpty()
         buildAnnotatedString {
             append(english)
-            verbs.forEach { addStyle(SpanStyle(color = red, fontWeight = FontWeight.Bold), it.first, it.last + 1) }
+            ranges.forEach { addStyle(SpanStyle(color = red, fontWeight = FontWeight.Bold), it.first, it.last + 1) }
         }
     }
     Text(text, fontSize = fontSize, lineHeight = lineHeight, fontWeight = fontWeight, color = color)
