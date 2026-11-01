@@ -72,6 +72,7 @@ import com.yichincho.englishbbc.data.LibraryItem
 import com.yichincho.englishbbc.data.Repo
 import com.yichincho.englishbbc.data.Sentence
 import com.yichincho.englishbbc.data.Settings
+import com.yichincho.englishbbc.data.Topic
 import com.yichincho.englishbbc.data.stageHeadline
 import com.yichincho.englishbbc.player.PlayerHolder
 import kotlinx.coroutines.delay
@@ -95,6 +96,8 @@ fun PlayerScreen(
     val transcripts by Repo.transcripts.collectAsStateWithLifecycle()
     val saved by Repo.saved.collectAsStateWithLifecycle()
     val sentences = transcripts[id].orEmpty()
+    val allTopics by Repo.topics.collectAsStateWithLifecycle()
+    val topicErrors by Repo.topicErrors.collectAsStateWithLifecycle()
 
     // Also picks up a half-finished transcript, so the part already written can be read while the rest is made.
     LaunchedEffect(id, item.hasTranscript) { Repo.loadTranscript(id) }
@@ -104,9 +107,9 @@ fun PlayerScreen(
         if (item.hasTranscript && !item.translationComplete && item.error.isEmpty()) Repo.prepare(id)
     }
 
-    // Older translations have no verbs yet; tag them once in the background so every sentence shows its verbs.
-    LaunchedEffect(id, sentences.isNotEmpty(), item.translationComplete) {
-        if (sentences.isNotEmpty() && item.translationComplete) Repo.tagVerbsIfNeeded(id)
+    // Topic highlights, and verbs for older translations: made once in the background, then saved.
+    LaunchedEffect(id, sentences.isNotEmpty(), item.translationComplete, stage == null) {
+        if (sentences.isNotEmpty() && item.translationComplete && stage == null) Repo.enrichIfNeeded(id)
     }
 
     val loaded = player.mediaId == id
@@ -144,7 +147,11 @@ fun PlayerScreen(
             when {
                 sentences.isEmpty() -> NoTranscript(item, stage)
                 hidden -> HiddenTranscript()
-                else -> TranscriptList(id, sentences, current, settings, onTap = ::jumpTo)
+                else -> TranscriptList(
+                    id, sentences, current, settings, onTap = ::jumpTo,
+                    topics = allTopics[id], topicError = topicErrors[id],
+                    makingTopics = stage?.startsWith(Repo.TOPICS_STAGE) == true,
+                )
             }
         }
 
@@ -220,17 +227,30 @@ private fun TopBar(title: String, speed: Float, autoSpeed: Float, player: Player
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
-private fun TranscriptList(episodeId: String, sentences: List<Sentence>, current: Int, settings: Settings, onTap: (Int) -> Unit) {
+private fun TranscriptList(
+    episodeId: String, sentences: List<Sentence>, current: Int, settings: Settings, onTap: (Int) -> Unit,
+    topics: List<Topic>?, topicError: String?, makingTopics: Boolean,
+) {
     val listState = rememberLazyListState()
+    // Item 0 is the topic card, so sentence i is item i + 1; the first sentence keeps the card in view.
     LaunchedEffect(current) {
-        if (current >= 0 && !listState.isScrollInProgress) listState.animateScrollToItem((current - 1).coerceAtLeast(0))
+        if (current >= 0 && !listState.isScrollInProgress) listState.animateScrollToItem(if (current <= 0) 0 else current)
     }
+    val topicStarts = remember(topics) { topics.orEmpty().withIndex().associate { it.value.start to it } }
     val size = settings.fontSizeSp
     val copy = rememberCopier()
     val haptic = LocalHapticFeedback.current
     LazyColumn(state = listState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
+        item(key = "topics") {
+            TopicCard(
+                episodeId, topics, makingTopics, topicError, current, size,
+                onJump = onTap, onRemake = { Repo.remakeTopics(episodeId) },
+            )
+        }
         itemsIndexed(sentences) { index, s ->
             val isCurrent = index == current
+            // Only past the first topic: the card above already introduces it.
+            topicStarts[index]?.takeIf { it.index > 0 }?.let { TopicDivider(it.index, it.value) }
             Column(
                 Modifier
                     .fillMaxWidth()

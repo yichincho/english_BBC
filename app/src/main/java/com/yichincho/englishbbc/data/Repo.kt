@@ -44,6 +44,12 @@ object Repo {
     val saved = MutableStateFlow<List<SavedSentence>>(emptyList())
     val transcripts = MutableStateFlow<Map<String, List<Sentence>>>(emptyMap())
     val feeds = MutableStateFlow<Map<String, FeedState>>(emptyMap())
+    /** Episode id → its topic highlights, once made. */
+    val topics = MutableStateFlow<Map<String, List<Topic>>>(emptyMap())
+    /** Episode id → why the highlights could not be made, so the card can say so and offer a retry. */
+    val topicErrors = MutableStateFlow<Map<String, String>>(emptyMap())
+    const val TOPICS_STAGE = "整理主題重點"
+
     /** The shared model list from yichincho/ai-models; null until the bundled copy has been read. */
     val catalog = MutableStateFlow<Catalog?>(null)
 
@@ -78,6 +84,7 @@ object Repo {
 
     /** Exists only while a transcript is unfinished; holds how many seconds of audio are already written down. */
     private fun progressFile(id: String) = File(filesDir, "transcripts/$id.progress")
+    private fun topicsFile(id: String) = File(filesDir, "transcripts/$id.topics.json")
 
     private fun transcriptComplete(id: String) = transcriptFile(id).exists() && !progressFile(id).exists()
 
@@ -162,11 +169,13 @@ object Repo {
     fun remove(id: String) {
         library.update { list -> list.filterNot { it.episode.id == id } }
         transcripts.update { it - id }
+        topics.update { it - id }
         persistLibrary()
         scope.launch {
             audioFile(id).delete()
             transcriptFile(id).delete()
             progressFile(id).delete()
+            topicsFile(id).delete()
         }
     }
 
@@ -201,6 +210,8 @@ object Repo {
                 return@launch
             }
             transcripts.update { if (it.containsKey(id)) it else it + (id to list) }
+            val saved = runCatching { topicsFromJson(JSONArray(topicsFile(id).readText()), list.size) }.getOrNull()
+            if (!saved.isNullOrEmpty()) topics.update { it + (id to saved) }
         }
     }
 
@@ -252,49 +263,88 @@ object Repo {
         job.start()
     }
 
-    /** Episodes whose verb tagging already ran (or gave up) since the app started, so it is tried once per launch. */
-    private val verbsTried = ConcurrentHashMap.newKeySet<String>()
+    /** Episodes whose background extras already ran (or gave up) since the app started; tried once per launch. */
+    private val enrichTried = ConcurrentHashMap.newKeySet<String>()
 
     /**
-     * Tags the verbs of sentences translated before verbs existed. Runs once per episode in the background,
-     * saves as it goes, so it never has to be paid for twice; a few failures in a row end it quietly.
+     * Fills in what older episodes lack, once, in the background: the topic highlights first (the reader sees
+     * them first), then the verbs of sentences translated before verbs were tagged. Both are saved, so they are
+     * never paid for twice; failures end quietly and the topic card shows what went wrong.
      */
-    fun tagVerbsIfNeeded(id: String) {
-        if (working.value.containsKey(id) || settings.value.translatorProvider() == null) return
+    fun enrichIfNeeded(id: String) {
         val start = transcripts.value[id] ?: return
-        if (start.none { it.verbs == null && it.zh.isNotBlank() } || !verbsTried.add(id)) return
-        setStage(id, "標記動詞")
+        // A transcript that reached memory by being saved, not loaded, has not had its highlights read yet.
+        if (!topics.value.containsKey(id) && topicsFile(id).exists()) {
+            val saved = runCatching { topicsFromJson(JSONArray(topicsFile(id).readText()), start.size) }.getOrNull()
+            if (!saved.isNullOrEmpty()) topics.update { it + (id to saved) }
+        }
+        if (working.value.containsKey(id) || settings.value.translatorProvider() == null) return
+        if (start.isEmpty() || !transcriptComplete(id)) return
+        val needTopics = !topicsFile(id).exists()
+        val needVerbs = start.any { it.verbs == null && it.zh.isNotBlank() }
+        if (!(needTopics || needVerbs) || !enrichTried.add(id)) return
+        setStage(id, if (needTopics) TOPICS_STAGE else "標記動詞")
         val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
-                var failed = 0
-                val todo = start.withIndex().filter { it.value.verbs == null && it.value.zh.isNotBlank() }
-                for ((n, batch) in todo.chunked(20).withIndex()) {
-                    val s = settings.value
-                    val provider = s.translatorProvider() ?: return@launch
-                    setStage(id, "標記動詞 ${n * 20}/${todo.size} 句")
-                    val tagged = try {
-                        retrying { Ai.tagVerbs(s, provider, batch) }
-                    } catch (e: AiException) {
-                        emptyMap()
-                    }
-                    currentCoroutineContext().ensureActive()
-                    if (tagged.isEmpty()) {
-                        if (++failed >= MAX_FAILED_BATCHES) return@launch
-                        continue
-                    }
-                    failed = 0
-                    // Re-read so a translation saved meanwhile is not overwritten.
-                    val latest = transcripts.value[id] ?: return@launch
-                    saveTranscript(id, latest.mapIndexed { i, sentence ->
-                        tagged[i]?.takeIf { sentence.en == start.getOrNull(i)?.en }?.let { sentence.copy(verbs = it) } ?: sentence
-                    })
-                }
+                if (needTopics) makeTopics(id, start)
+                if (needVerbs) tagVerbs(id, start)
             } finally {
                 if (jobs.remove(id, coroutineContext.job)) working.update { it - id }
             }
         }
         jobs[id] = job
         job.start()
+    }
+
+    /** Throws the saved highlights away and asks the AI again. */
+    fun remakeTopics(id: String) {
+        if (working.value.containsKey(id)) return
+        topicsFile(id).delete()
+        topics.update { it - id }
+        topicErrors.update { it - id }
+        enrichTried.remove(id)
+        enrichIfNeeded(id)
+    }
+
+    private suspend fun makeTopics(id: String, sentences: List<Sentence>) {
+        val s = settings.value
+        val provider = s.translatorProvider() ?: return
+        setStage(id, TOPICS_STAGE)
+        topicErrors.update { it - id }
+        try {
+            val list = retrying { Ai.topics(s, provider, sentences) }
+            currentCoroutineContext().ensureActive()
+            writeAtomically(topicsFile(id)) { list.toJsonArray { it.toJson() }.toString() }
+            topics.update { it + (id to list) }
+        } catch (e: AiException) {
+            topicErrors.update { it + (id to (e.message ?: "整理主題失敗")) }
+        }
+    }
+
+    private suspend fun tagVerbs(id: String, start: List<Sentence>) {
+        var failed = 0
+        val todo = start.withIndex().filter { it.value.verbs == null && it.value.zh.isNotBlank() }
+        for ((n, batch) in todo.chunked(20).withIndex()) {
+            val s = settings.value
+            val provider = s.translatorProvider() ?: return
+            setStage(id, "標記動詞 ${n * 20}/${todo.size} 句")
+            val tagged = try {
+                retrying { Ai.tagVerbs(s, provider, batch) }
+            } catch (e: AiException) {
+                emptyMap()
+            }
+            currentCoroutineContext().ensureActive()
+            if (tagged.isEmpty()) {
+                if (++failed >= MAX_FAILED_BATCHES) return
+                continue
+            }
+            failed = 0
+            // Re-read so a translation saved meanwhile is not overwritten.
+            val latest = transcripts.value[id] ?: return
+            saveTranscript(id, latest.mapIndexed { i, sentence ->
+                tagged[i]?.takeIf { sentence.en == start.getOrNull(i)?.en }?.let { sentence.copy(verbs = it) } ?: sentence
+            })
+        }
     }
 
     /** Stops translating [id]. A call already sent to the AI ends on its own; its answer is thrown away. */

@@ -136,3 +136,33 @@ fun savedSentenceFromJson(o: JSONObject) = SavedSentence(
 fun <T> JSONArray.mapObjects(f: (JSONObject) -> T): List<T> = (0 until length()).map { f(getJSONObject(it)) }
 
 fun <T> List<T>.toJsonArray(f: (T) -> JSONObject): JSONArray = JSONArray().also { arr -> forEach { arr.put(f(it)) } }
+
+/** One key point of a topic: a short English sentence and its Chinese. */
+data class TopicPoint(val en: String, val zh: String)
+
+/** A stretch of the episode about one subject, starting at sentence [start]. */
+data class Topic(val start: Int, val title: String, val titleZh: String, val points: List<TopicPoint>)
+
+fun Topic.toJson(): JSONObject = JSONObject()
+    .put("start", start).put("title", title).put("titleZh", titleZh)
+    .put("points", points.toJsonArray { JSONObject().put("en", it.en).put("zh", it.zh) })
+
+/**
+ * Reads topics from the AI (or from disk) and makes them safe to show: starts inside [sentenceCount], in order,
+ * one topic per start, the first at sentence 0, and only points that have both languages.
+ */
+fun topicsFromJson(arr: JSONArray, sentenceCount: Int): List<Topic> {
+    if (sentenceCount <= 0) return emptyList()
+    val parsed = arr.mapObjects { it }.mapNotNull { o ->
+        val points = (o.optJSONArray("points") ?: JSONArray()).mapObjects { TopicPoint(it.optString("en").trim(), it.optString("zh").trim()) }
+            .filter { it.en.isNotEmpty() && it.zh.isNotEmpty() }
+            .take(MAX_TOPIC_POINTS)
+        val title = o.optString("title").trim()
+        if (points.isEmpty() || title.isEmpty()) return@mapNotNull null
+        Topic(o.optInt("start", 0).coerceIn(0, sentenceCount - 1), title, o.optString("titleZh").trim(), points)
+    }.sortedBy { it.start }.distinctBy { it.start }.take(MAX_TOPICS)
+    return parsed.mapIndexed { i, t -> if (i == 0) t.copy(start = 0) else t }
+}
+
+const val MAX_TOPICS = 10
+const val MAX_TOPIC_POINTS = 6
