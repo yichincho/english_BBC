@@ -1,5 +1,6 @@
 package com.yichincho.englishbbc.ui
 
+import com.yichincho.englishbbc.data.JsonRescue
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

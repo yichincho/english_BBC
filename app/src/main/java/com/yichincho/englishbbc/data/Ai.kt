@@ -336,6 +336,15 @@ v 列出這句英文裡的動詞：$VERB_RULE
 只輸出 JSON，格式：{"items":[{"i":0,"zh":"中文翻譯","words":[{"en":"單字","zh":"意思"}],"v":["動詞"]}]}
 i 要跟輸入的一樣，每一句都要有，不可以漏。"""
 
+    private const val TOPICS_SYSTEM = """你是幫台灣學生練英文聽力的老師。我會給你一集 BBC 節目的逐字稿，每行開頭是句子編號。
+請依內容把節目分成 1～8 個主題：新聞節目通常一則新聞一個主題；整集只談一件事就只給一個主題。開場、片頭、廣告不要自成主題。
+每個主題給：
+- start：這個主題第一句的編號
+- title：簡短英文標題（不超過 8 個字）；titleZh：繁體中文標題
+- points：3～5 個重點。en 是一句簡單的英文（中級學習者看得懂，盡量用節目裡的關鍵字），zh 是它的繁體中文（台灣用語）
+不得加入節目沒說的事實。
+只輸出 JSON，格式：{"topics":[{"start":0,"title":"英文標題","titleZh":"中文標題","points":[{"en":"English point","zh":"中文重點"}]}]}"""
+
     /** One translation call may take this long before it counts as stuck. */
     const val TRANSLATE_TIMEOUT_SEC = 90L
 
@@ -367,6 +376,21 @@ i 要跟輸入的一樣，每一句都要有，不可以漏。"""
         val arr = o.optJSONArray("v") ?: return null
         return (0 until arr.length()).map { arr.optString(it).trim() }
             .filter { it.isNotEmpty() && english.contains(it, ignoreCase = true) }
+    }
+
+    /** Splits the whole episode into topics with English key points and their Chinese. One call per episode. */
+    fun topics(s: Settings, p: Provider, sentences: List<Sentence>): List<Topic> {
+        val user = sentences.withIndex().joinToString("\n") { "${it.index}: ${it.value.en}" }
+        val raw = if (p == Provider.GEMINI) Gemini.chatJson(s.key(p), s.model(p), TOPICS_SYSTEM, user, 240, failOnTruncation = true)
+        else OpenAiCompat.chat(p, s.key(p), s.model(p), TOPICS_SYSTEM, user, maxTokens = 8192, timeoutSec = 240, failOnTruncation = true)
+        val obj = try {
+            JsonRescue.extract(raw)
+        } catch (e: IllegalArgumentException) {
+            throw AiException("${p.label} 整理主題失敗：${e.message}")
+        }
+        val topics = topicsFromJson(obj.optJSONArray("topics") ?: JSONArray(), sentences.size)
+        if (topics.isEmpty()) throw AiException("${p.label} 沒有整理出主題")
+        return topics
     }
 
     /** Finds the verbs of sentences translated before verbs were tagged. Returns index → verbs. */
