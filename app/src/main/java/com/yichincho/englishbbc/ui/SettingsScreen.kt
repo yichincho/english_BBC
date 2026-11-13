@@ -150,7 +150,7 @@ fun SettingsScreen(padding: PaddingValues, settings: Settings, now: LocalDateTim
             steps = MAX_VOLUME_BOOST_DB - 1,
         )
         Text(
-            "手機音量開到最大還是太小（例如藍牙耳機）就往右拉；聲音開始破掉就往左一點。",
+            "手機音量開到最大還是太小（例如藍牙耳機、車上）就往右拉；聲音開始破掉或發悶就往左一點。",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 

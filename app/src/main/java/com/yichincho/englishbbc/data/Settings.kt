@@ -14,8 +14,11 @@ val DEFAULT_FEEDS = listOf(
     Feed("Six O'Clock News", "https://podcasts.files.bbci.co.uk/b006qjxt.rss"),
 )
 
-/** Upper end of the volume boost slider; more than this mostly adds distortion. */
-const val MAX_VOLUME_BOOST_DB = 15
+/**
+ * Upper end of the volume boost slider. BBC speech is mastered 10-15 dB quieter than pop music, so in a car
+ * it needs a lot; the effect's own limiter keeps peaks from clipping, at the cost of sounding flatter near the top.
+ */
+const val MAX_VOLUME_BOOST_DB = 30
 
 enum class Provider(val label: String) { GEMINI("Gemini"), NVIDIA("NVIDIA"), DEEPSEEK("DeepSeek") }
 
