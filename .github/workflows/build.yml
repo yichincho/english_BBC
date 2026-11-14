@@ -21,6 +21,9 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      - name: Sync latest ai-models catalog
+        run: curl -sSfL https://raw.githubusercontent.com/yichincho/ai-models/main/models.json -o app/src/main/assets/models.json
+
       - name: Test and build
         run: ./gradlew --no-daemon testDebugUnitTest assembleRelease
 

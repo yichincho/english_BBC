@@ -36,20 +36,23 @@ val PRESET_MODELS: Map<Provider, List<String>> = mapOf(
     Provider.NVIDIA to listOf(
         "deepseek-ai/deepseek-v4.1-flash",
         "z-ai/glm-5.3-flash",
-        "z-ai/glm-5.3",
-        "z-ai/glm-5.2",
+        "minimaxai/minimax-m3.1-flash",
         "nvidia/nemotron-3-ultra-550b-a55b",
         "nvidia/nemotron-3.5-lightning-30b-a3b",
         "google/gemma-4-31b-it",
         "openai/gpt-oss-20b",
+        "mistralai/mistral-large-4-1t-a52b",
+        "stepfun-ai/step-5-preview",
+        "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
     ),
     Provider.GEMINI to listOf(
+        "gemini-3.8-flash",
         "gemini-3.7-flash",
         "gemini-3.6-flash",
         "gemini-3.5-flash",
-        "gemini-3.8-flash",
         "gemini-flash-latest",
         "gemini-3.5-flash-lite",
+        "gemma-4-31b-it",
     ),
 )
 

@@ -29,6 +29,18 @@ BBC 英文聽力練習 App（Android）。聽不懂的地方，有逐句原稿�
 - AI 寫的原稿不是 100% 正確，人名、地名偶爾會錯；時間只精確到秒，亮起來的句子可能差一兩秒。
 - 做原稿的時候要讓 App 開著。原稿每 10 分鐘的聲音存一次，中途斷掉再按「再試一次」會從斷掉的地方接續。
 
+## AI 模型同步與調用
+
+本專案的 AI 模型清單（Gemini / NVIDIA / DeepSeek）統一依賴 **[yichincho/ai-models](https://github.com/yichincho/ai-models)**。
+
+- **線上即時調用**：App 每次啟動時，會透過 `AiCatalog.kt` 直接拉取線上的 [`models.json`](https://raw.githubusercontent.com/yichincho/ai-models/main/models.json)。因此當模型更新、新增或下架時，**完全不需要重新編譯或重裝 APK**，App 就會自動切換為最新可用的模型。
+- **離線與 APK 建置保證**：App 內附 `app/src/main/assets/models.json` 作為離線備援。GitHub Actions 每次建置 APK 時，亦會自動拉取最新清單打包進 APK。
+- **如何請求更新模型清單？**：
+  只要隨時向 AI 助手發送以下指令之一：
+  > **「幫我更新 ai-models」** 或 **「幫我檢查目前最新可用的免費模型」**
+
+  AI 會自動檢測各大廠商最新免費可用端點、更新 `ai-models` 倉庫並同步推送到 GitHub，手機端下次開啟 App 即享最新模型。
+
 ## 開發
 
 ```bash
@@ -37,6 +49,6 @@ BBC 英文聽力練習 App（Android）。聽不懂的地方，有逐句原稿�
 
 APK 在 `app/build/outputs/apk/release/`。
 
-AI 型號清單來自共用的 [yichincho/ai-models](https://github.com/yichincho/ai-models)：App 啟動時讀線上的 `models.json`，離線時用 `app/src/main/assets/models.json`。`app/src/main/java/ai/models/` 是從那裡複製來的呼叫程式，要改請先改 ai-models 再複製過來。推到 `main` 之後，GitHub Actions 會自動建置並更新 Releases。
+`app/src/main/java/ai/models/` 是從 [yichincho/ai-models](https://github.com/yichincho/ai-models) 複製來的呼叫程式，若呼叫介面有調整請先改 ai-models 再同步過來。推到 `main` 之後，GitHub Actions 會自動建置並更新 Releases。
 
 `signing/app.keystore` 是故意放進 repo 的固定簽章檔（密碼就寫在 `app/build.gradle.kts`），這樣每次建置出來的 APK 都能直接蓋掉舊版、不用先移除。它不是機密；如果哪天要上架商店，請換成自己保管的金鑰。
